@@ -86,7 +86,7 @@ graph TD
     Main --> Flatten["SpreadsheetDuplicator.js\nflattenUnsafeFormulas()"]
     Flatten --> Classify["FormulaClassifier.js\nclassifyFormula()"]
     Classify --> Parse["FormulaParser.js\nfunction / sheet-ref extraction"]
-    Main --> Fetch["XlsxExport.js\nfetchXlsxBlob()"]
+    Main --> Fetch["XlsxFetch.js\nfetchXlsxBlob()"]
     Main --> Save["DriveUtils.js\nsaveBlobToDriveFolder()"]
   end
 

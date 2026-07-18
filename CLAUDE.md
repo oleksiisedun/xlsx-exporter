@@ -5,11 +5,11 @@ Google Apps Script library that exports a Google Sheets spreadsheet to a real `.
 ## Project-specific conventions
 
 - Plain `.js` Apps Script files — every function has a JSDoc comment with typed `@param`/`@returns`, per the global JS conventions.
-- Apps Script concatenates every `.js` file in the project into one global scope (no import system). The file split (`Main.js`, `FormulaClassifier.js`, `FormulaParser.js`, `SpreadsheetDuplicator.js`, `XlsxExport.js`, `DriveUtils.js`, `Test.js`) is purely organizational.
+- Apps Script concatenates every `.js` file in the project into one global scope (no import system). The file split (`Main.js`, `FormulaClassifier.js`, `FormulaParser.js`, `SpreadsheetDuplicator.js`, `XlsxFetch.js`, `DriveUtils.js`, `Test.js`) is purely organizational.
 
 ## Architecture summary
 
-`Main.js` is the public entry point (`exportSpreadsheetToXlsxBlob`, `exportSpreadsheetToXlsxFile`). It duplicates the source spreadsheet in Drive (`SpreadsheetDuplicator.js`), deletes excluded sheets from the copy, then flattens unsafe cells in the copy by reading formulas/values from the **untouched source** and writing static values into the **duplicate** — never the reverse, and the source is never mutated. Each cell's safe/unsafe classification (`FormulaClassifier.js`) relies on regex-based extraction of function names and sheet references from the formula text (`FormulaParser.js`). Once flattening is done, `XlsxExport.js` fetches the real `.xlsx` bytes via Google's native `/export?format=xlsx` endpoint, and the temporary Drive copy is deleted in a `finally` block. `DriveUtils.js` is a small helper to save the resulting Blob to a Drive folder.
+`Main.js` is the public entry point (`exportSpreadsheetToXlsxBlob`, `exportSpreadsheetToXlsxFile`). It duplicates the source spreadsheet in Drive (`SpreadsheetDuplicator.js`), deletes excluded sheets from the copy, then flattens unsafe cells in the copy by reading formulas/values from the **untouched source** and writing static values into the **duplicate** — never the reverse, and the source is never mutated. Each cell's safe/unsafe classification (`FormulaClassifier.js`) relies on regex-based extraction of function names and sheet references from the formula text (`FormulaParser.js`). Once flattening is done, `XlsxFetch.js` fetches the real `.xlsx` bytes via Google's native `/export?format=xlsx` endpoint, and the temporary Drive copy is deleted in a `finally` block. `DriveUtils.js` is a small helper to save the resulting Blob to a Drive folder.
 
 ## Key non-obvious design decisions (read before changing flatten logic)
 
