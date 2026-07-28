@@ -1,4 +1,12 @@
 /**
+ * Name prefix for temporary Drive copies made during export. Shared between
+ * the copy step below and DriveUtils.js's orphan sweep, which identifies
+ * leftover copies from previous runs by this prefix.
+ * @type {string}
+ */
+const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
+
+/**
  * @typedef {Object} ExportXlsxOptions
  * @property {string} spreadsheetId - ID of the source Google Sheets spreadsheet. Never mutated.
  * @property {string[]} [includeSheets] - Sheet names to include. Mutually exclusive with excludeSheets.
@@ -29,7 +37,9 @@ function exportSpreadsheetToXlsxBlob(options) {
 
   const baseFileName = fileName || sourceSs.getName();
   const timestampedFileName = buildTimestampedFileName(baseFileName, sourceSs.getSpreadsheetTimeZone());
-  const copiedFile = duplicateSpreadsheetFile(spreadsheetId, `__xlsx_export_tmp__${baseFileName}__${Date.now()}`);
+
+  cleanUpOrphanedExportTempFiles(spreadsheetId, XLSX_EXPORT_TEMP_FILE_PREFIX);
+  const copiedFile = duplicateSpreadsheetFile(spreadsheetId, `${XLSX_EXPORT_TEMP_FILE_PREFIX}${baseFileName}__${Date.now()}`);
 
   try {
     const dupSs = SpreadsheetApp.openById(copiedFile.getId());
@@ -38,11 +48,7 @@ function exportSpreadsheetToXlsxBlob(options) {
     SpreadsheetApp.flush();
     return fetchXlsxBlob(copiedFile.getId()).setName(`${timestampedFileName}.xlsx`);
   } finally {
-    try {
-      DriveApp.getFileById(copiedFile.getId()).setTrashed(true);
-    } catch (cleanupError) {
-      console.warn(`exportSpreadsheetToXlsxBlob: failed to clean up temp file ${copiedFile.getId()}: ${cleanupError}`);
-    }
+    deleteFileWithRetry(copiedFile.getId());
   }
 }
 
