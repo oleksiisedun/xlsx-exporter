@@ -37,9 +37,16 @@ const file = XlsxExporter.exportSpreadsheetToXlsxFile(
   { spreadsheetId: '...', excludeSheets: ['Internal Notes'] },
   'DRIVE_FOLDER_ID'
 );
+
+// Tune (or skip) the wait for in-progress calculations before export
+const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
+  spreadsheetId: '...',
+  calculationWaitTimeoutMs: 180000,      // wait up to 3 min (default 2 min)
+  calculationWaitPollIntervalMs: 5000,   // check every 5s (default 3s)
+});
 ```
 
-`includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone.
+`includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone. Pass `calculationWaitTimeoutMs: 0` to skip the calculation wait entirely — see [Waiting for pending calculations](#waiting-for-pending-calculations) below.
 
 ### Required scopes in the consuming project
 
@@ -84,7 +91,8 @@ graph TD
 
   subgraph Lib["xlsx-exporter library"]
     Main --> Resolve["resolveIncludedSheetNames()"]
-    Main --> Dup["SpreadsheetDuplicator.js\nduplicate + delete excluded sheets"]
+    Main --> Wait["CalculationWaiter.js\nwaitForCalculationsToFinish()"]
+    Wait --> Dup["SpreadsheetDuplicator.js\nduplicate + delete excluded sheets"]
     Main --> Flatten["SpreadsheetDuplicator.js\nflattenUnsafeFormulas()"]
     Flatten --> Classify["FormulaClassifier.js\nclassifyFormula()"]
     Classify --> Parse["FormulaParser.js\nfunction / sheet-ref extraction"]
@@ -103,8 +111,27 @@ graph TD
 
 Because `IMPORTRANGE` cells are always classified unsafe, the library never depends on the temporary Drive copy's own (unauthorized — a Drive copy is a new file ID, so it starts without `IMPORTRANGE` access grants) evaluation of that formula; the static value written into the copy always comes from the already-authorized source spreadsheet.
 
+## Waiting for pending calculations
+
+Custom Apps Script functions and `IMPORTRANGE` compute asynchronously — while a value is still being computed, Sheets shows the placeholder text `"Loading..."` in that cell. If export ran at that exact moment, it would flatten that placeholder into the export as a static value instead of the real result.
+
+Before duplicating the spreadsheet, the library polls the source for exactly the cells that would be flattened (unsafe-formula cells and formula-less non-blank cells — not every cell, since a still-calculating **safe** live formula stays a live formula in the export and is never read) until none show `"Loading..."`, or until `calculationWaitTimeoutMs` (default 2 minutes) elapses, in which case it throws an error naming the exact sheet and cell still stuck. Pass `calculationWaitTimeoutMs: 0` to skip this check entirely.
+
+**Known limitation**: a formula-less cell where someone manually typed the literal text `"Loading..."` is indistinguishable from a genuinely pending cell — the export will wait on it and eventually throw a timeout error naming that cell, rather than silently exporting the wrong value.
+
 ## Testing
 
 There's no automated test framework in Apps Script. `Test.js` has `testEndToEndExport()`, which you run directly from the Apps Script editor: fill in a scratch spreadsheet ID and destination Drive folder ID, then run it and open the result to verify sheet contents match expectations.
 
 Suggested scratch spreadsheet layout for a thorough check: a `Data` sheet with safe formulas, a `Custom` sheet with a real custom Apps Script function, an `External` sheet with `IMPORTRANGE`, a `Summary` sheet with a formula referencing `Data!`, a formula/named range referencing a sheet you'll exclude, and an `ARRAYFORMULA` spilling across multiple rows/columns, and an `Excluded` sheet. Confirm: the excluded sheet is absent from the export; safe formulas are still live; `IMPORTRANGE`/custom-function/excluded-referencing cells and the full extent of the `ARRAYFORMULA`'s spilled output are static values, not blank or errored; and the original spreadsheet is completely unchanged afterward.
+
+To verify the calculation wait, add a deliberately slow custom function **defined in the scratch spreadsheet's own bound Apps Script project** (not this library — custom functions execute in the calling spreadsheet's context), e.g.:
+
+```js
+function SLOW_VALUE(seconds) {
+  Utilities.sleep((seconds || 5) * 1000);
+  return 'done';
+}
+```
+
+Use it in a cell, trigger an edit so it starts recalculating, and immediately run the export. With a generous `calculationWaitTimeoutMs`, confirm the export waits and the real value (`'done'`, not `"Loading..."`) lands in the output. With a very small `calculationWaitTimeoutMs`, confirm the export throws, naming the correct sheet and cell. Also worth checking once: log the cell's raw value while it's still calculating (`console.log(JSON.stringify(value))`) to confirm the exact placeholder text matches `CALCULATION_LOADING_PLACEHOLDER` in `CalculationWaiter.js` for your environment/locale.
