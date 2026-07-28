@@ -89,16 +89,7 @@ function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, included
     const dupSheet = duplicateSpreadsheet.getSheetByName(sheetName);
 
     for (let r = 0; r < numRows; r++) {
-      const flattenCols = [];
-      for (let c = 0; c < numCols; c++) {
-        const formula = formulas[r][c];
-        const value = values[r][c];
-        if (!formula) {
-          if (value !== '' && value !== null) flattenCols.push(c);
-        } else if (classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE') {
-          flattenCols.push(c);
-        }
-      }
+      const flattenCols = getFlattenColumnIndices(formulas[r], values[r], excludedSheetNames, namedRangeSheetNames);
       writeFlattenedRunsForRow(dupSheet, r, flattenCols, values[r]);
     }
   });

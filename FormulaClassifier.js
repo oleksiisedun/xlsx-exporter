@@ -85,3 +85,35 @@ function classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) {
 
   return 'SAFE';
 }
+
+/**
+ * Determines which 0-based column indices in a single row must be flattened
+ * to a static value for the export: either the cell holds its own UNSAFE
+ * formula, or it holds no formula of its own but a non-blank value (a spill
+ * cell or a plain literal — see the block comment above
+ * `flattenUnsafeFormulas` in SpreadsheetDuplicator.js for why those are
+ * indistinguishable and both get rewritten). This is the single source of
+ * truth for "which cells get their value frozen into the export" — reused
+ * by both `flattenUnsafeFormulas` (which does the freezing) and
+ * `buildCalculationWatchLists` in CalculationWaiter.js (which needs to know,
+ * before freezing, whether any of those specific cells are still showing
+ * the "Loading..." placeholder).
+ * @param {string[]} formulaRow - One row from Range.getFormulas().
+ * @param {Array} valueRow - The corresponding row from Range.getValues().
+ * @param {Set<string>} excludedSheetNames
+ * @param {Map<string,string>} namedRangeSheetNames
+ * @returns {number[]} 0-based column indices, ascending.
+ */
+function getFlattenColumnIndices(formulaRow, valueRow, excludedSheetNames, namedRangeSheetNames) {
+  const cols = [];
+  for (let c = 0; c < formulaRow.length; c++) {
+    const formula = formulaRow[c];
+    const value = valueRow[c];
+    if (!formula) {
+      if (value !== '' && value !== null) cols.push(c);
+    } else if (classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE') {
+      cols.push(c);
+    }
+  }
+  return cols;
+}
