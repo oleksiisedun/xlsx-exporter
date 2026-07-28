@@ -44,6 +44,12 @@ const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
   calculationWaitTimeoutMs: 180000,      // wait up to 3 min (default 2 min)
   calculationWaitPollIntervalMs: 5000,   // check every 5s (default 3s)
 });
+
+// Override the base file name (the date/time suffix is still appended)
+const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
+  spreadsheetId: '...',
+  fileName: 'Data Export', // → "Data Export 28.07.2026 15:51"
+});
 ```
 
 `includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone. Pass `calculationWaitTimeoutMs: 0` to skip the calculation wait entirely — see [Waiting for pending calculations](#waiting-for-pending-calculations) below.
