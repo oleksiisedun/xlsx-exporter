@@ -12,6 +12,8 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
  * @property {string[]} [includeSheets] - Sheet names to include. Mutually exclusive with excludeSheets.
  * @property {string[]} [excludeSheets] - Sheet names to exclude. Mutually exclusive with includeSheets.
  * @property {string} [fileName] - Base file name (no extension) for the export; defaults to the source spreadsheet's name. The current date/time is always appended.
+ * @property {number} [calculationWaitTimeoutMs] - Max time (ms) to wait for pending custom-function/IMPORTRANGE calculations on the source to settle before exporting. Defaults to 120000 (2 min). Pass 0 to skip the wait entirely.
+ * @property {number} [calculationWaitPollIntervalMs] - Delay (ms) between calculation-status re-checks while waiting. Defaults to 3000 (3s).
  */
 
 /**
@@ -21,12 +23,18 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
  * flattened to their last computed static value; all other formulas remain
  * live in the export. The source spreadsheet is only ever read, never mutated
  * — all writes happen on a temporary Drive copy, which is deleted afterward
- * even if an error occurs.
+ * even if an error occurs. Before duplicating, the source is polled until any
+ * cell that would be flattened into a static value has finished calculating
+ * (see CalculationWaiter.js) — this prevents the transient "Loading..."
+ * placeholder from being baked into the export.
  * @param {ExportXlsxOptions} options
  * @returns {GoogleAppsScript.Base.Blob}
  */
 function exportSpreadsheetToXlsxBlob(options) {
-  const { spreadsheetId, includeSheets, excludeSheets, fileName } = options || {};
+  const {
+    spreadsheetId, includeSheets, excludeSheets, fileName,
+    calculationWaitTimeoutMs, calculationWaitPollIntervalMs,
+  } = options || {};
   if (!spreadsheetId) throw new Error('exportSpreadsheetToXlsxBlob: options.spreadsheetId is required.');
 
   const sourceSs = SpreadsheetApp.openById(spreadsheetId);
@@ -34,6 +42,8 @@ function exportSpreadsheetToXlsxBlob(options) {
   const includedSheetNames = resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets);
   const excludedSheetNamesSet = new Set(allSheetNames.filter((n) => !includedSheetNames.includes(n)));
   const namedRangeSheetNames = buildNamedRangeSheetMap(sourceSs);
+
+  waitForCalculationsToFinish(sourceSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, calculationWaitTimeoutMs, calculationWaitPollIntervalMs);
 
   const baseFileName = fileName || sourceSs.getName();
   const timestampedFileName = buildTimestampedFileName(baseFileName, sourceSs.getSpreadsheetTimeZone());
