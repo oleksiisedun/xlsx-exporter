@@ -8,7 +8,7 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
 
 /**
  * @typedef {Object} ExportXlsxOptions
- * @property {string} spreadsheetId - ID of the source Google Sheets spreadsheet. Never mutated.
+ * @property {string} [spreadsheetId] - ID of the source Google Sheets spreadsheet. Never mutated. Defaults to the active spreadsheet (SpreadsheetApp.getActiveSpreadsheet()) if omitted — only resolvable when the library is called from a bound script context (e.g. a container-bound script or a simple/installable trigger), not from a standalone script or webapp with no active spreadsheet.
  * @property {string[]} [includeSheets] - Sheet names to include. Mutually exclusive with excludeSheets.
  * @property {string[]} [excludeSheets] - Sheet names to exclude. Mutually exclusive with includeSheets.
  * @property {string} [fileName] - Base file name (no extension) for the export; defaults to the source spreadsheet's name. The current date/time is always appended.
@@ -35,9 +35,12 @@ function exportSpreadsheetToXlsxBlob(options) {
     spreadsheetId, includeSheets, excludeSheets, fileName,
     calculationWaitTimeoutMs, calculationWaitPollIntervalMs,
   } = options || {};
-  if (!spreadsheetId) throw new Error('exportSpreadsheetToXlsxBlob: options.spreadsheetId is required.');
 
-  const sourceSs = SpreadsheetApp.openById(spreadsheetId);
+  const sourceSs = spreadsheetId ? SpreadsheetApp.openById(spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
+  if (!sourceSs) {
+    throw new Error('exportSpreadsheetToXlsxBlob: options.spreadsheetId was not provided and there is no active spreadsheet.');
+  }
+  const resolvedSpreadsheetId = sourceSs.getId();
   const allSheetNames = sourceSs.getSheets().map((s) => s.getName());
   const includedSheetNames = resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets);
   const excludedSheetNamesSet = new Set(allSheetNames.filter((n) => !includedSheetNames.includes(n)));
@@ -48,8 +51,8 @@ function exportSpreadsheetToXlsxBlob(options) {
   const baseFileName = fileName || sourceSs.getName();
   const timestampedFileName = buildTimestampedFileName(baseFileName, sourceSs.getSpreadsheetTimeZone());
 
-  cleanUpOrphanedExportTempFiles(spreadsheetId, XLSX_EXPORT_TEMP_FILE_PREFIX);
-  const copiedFile = duplicateSpreadsheetFile(spreadsheetId, `${XLSX_EXPORT_TEMP_FILE_PREFIX}${baseFileName}__${Date.now()}`);
+  cleanUpOrphanedExportTempFiles(resolvedSpreadsheetId, XLSX_EXPORT_TEMP_FILE_PREFIX);
+  const copiedFile = duplicateSpreadsheetFile(resolvedSpreadsheetId, `${XLSX_EXPORT_TEMP_FILE_PREFIX}${baseFileName}__${Date.now()}`);
 
   try {
     const dupSs = SpreadsheetApp.openById(copiedFile.getId());

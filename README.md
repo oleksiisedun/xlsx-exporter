@@ -26,6 +26,10 @@ It also solves a related problem: if you export only a subset of sheets and a fo
 // Export everything
 const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({ spreadsheetId: '...' });
 
+// spreadsheetId is optional — omit it to export the active spreadsheet
+// (only resolvable from a container-bound script or trigger, e.g. a custom menu item)
+const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({});
+
 // Export only specific sheets
 const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
   spreadsheetId: '...',
@@ -51,6 +55,8 @@ const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
   fileName: 'Data Export', // → "Data Export 28.07.2026 15:51"
 });
 ```
+
+`spreadsheetId` is optional — if omitted, the library falls back to `SpreadsheetApp.getActiveSpreadsheet()`, which only resolves when called from a bound script context (a container-bound script or a simple/installable trigger); calling it without `spreadsheetId` from a standalone script or webapp throws.
 
 `includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone. Pass `calculationWaitTimeoutMs: 0` to skip the calculation wait entirely — see [Waiting for pending calculations](#waiting-for-pending-calculations) below.
 
