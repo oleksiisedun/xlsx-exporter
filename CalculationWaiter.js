@@ -26,6 +26,19 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
  * calculating is irrelevant here — it stays a live formula in the export
  * (never read/frozen), so its transient value doesn't matter.
  *
+ * The absence of the "Loading..." placeholder is not by itself proof that a
+ * cell is done: a cross-spreadsheet IMPORTRANGE read through a script (as
+ * opposed to a live browser session that keeps it warm) can briefly report a
+ * plausible-but-stale value — e.g. 0 — instead of the placeholder while it
+ * is still settling, especially for wider imports or ones wrapped in extra
+ * array steps (LET/FILTER/CHOOSECOLS...). Relying solely on the placeholder
+ * check let exactly this slip through: the loop saw no "Loading..." on the
+ * very first read and exited immediately, and the later, separate read in
+ * `flattenUnsafeFormulas` baked in that same stale 0. To guard against this,
+ * a poll only counts as settled once two consecutive reads — spaced
+ * `pollIntervalMs` apart — see no "Loading..." AND report identical values
+ * for every watched cell; any change between polls resets the count.
+ *
  * Formulas are read from the source exactly once, up front: unlike values,
  * formula text can't change purely as a result of waiting for calculation
  * to settle, so only values are re-read on each poll.
@@ -47,14 +60,24 @@ function waitForCalculationsToFinish(sourceSpreadsheet, includedSheetNames, excl
   const watchLists = buildCalculationWatchLists(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames);
   const deadline = Date.now() + timeout;
 
+  let previousValues = null;
   while (true) {
     const stillCalculating = findCellStillCalculating(sourceSpreadsheet, watchLists);
-    if (!stillCalculating) return;
+    if (!stillCalculating) {
+      const currentValues = captureWatchedValues(sourceSpreadsheet, watchLists);
+      if (previousValues && watchedValuesEqual(previousValues, currentValues)) return;
+      previousValues = currentValues;
+    } else {
+      previousValues = null;
+    }
+
     if (Date.now() >= deadline) {
+      const reason = stillCalculating
+        ? `"${stillCalculating.sheetName}"!${stillCalculating.a1Notation} still shows "${CALCULATION_LOADING_PLACEHOLDER}"`
+        : 'watched cell values were still changing between consecutive reads, never settling on two identical reads in a row';
       throw new Error(
-        `waitForCalculationsToFinish: "${stillCalculating.sheetName}"!${stillCalculating.a1Notation} still shows ` +
-        `"${CALCULATION_LOADING_PLACEHOLDER}" after waiting ${timeout}ms; aborting export before it bakes that ` +
-        `placeholder into a static value. Pass a larger calculationWaitTimeoutMs if this cell's source (custom ` +
+        `waitForCalculationsToFinish: ${reason} after waiting ${timeout}ms; aborting export before an unsettled ` +
+        `value bakes into the static export. Pass a larger calculationWaitTimeoutMs if this cell's source (custom ` +
         `function, IMPORTRANGE, ...) genuinely needs longer, or calculationWaitTimeoutMs: 0 to skip this check.`
       );
     }
@@ -114,4 +137,50 @@ function findCellStillCalculating(spreadsheet, watchLists) {
     }
   }
   return null;
+}
+
+/**
+ * Reads the current value of every watched cell, keyed by sheet name, so two
+ * successive polls can be compared for equality. This is what lets
+ * `waitForCalculationsToFinish` catch a cell that reports a plausible but
+ * still-unsettled value (e.g. a cross-spreadsheet IMPORTRANGE briefly
+ * showing 0) without ever displaying the "Loading..." placeholder.
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
+ * @param {Map<string, number[][]>} watchLists
+ * @returns {Map<string, Array>} Sheet name -> cell values, in the same order as watchLists' [row, col] pairs.
+ */
+function captureWatchedValues(spreadsheet, watchLists) {
+  const snapshot = new Map();
+  for (const [sheetName, cells] of watchLists) {
+    if (cells.length === 0) {
+      snapshot.set(sheetName, []);
+      continue;
+    }
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    const values = sheet.getDataRange().getValues();
+    snapshot.set(sheetName, cells.map(([r, c]) => (values[r] ? values[r][c] : undefined)));
+  }
+  return snapshot;
+}
+
+/**
+ * Compares two watched-value snapshots (from `captureWatchedValues`) for
+ * exact equality, cell by cell. Dates are compared by timestamp since
+ * `Range.getValues()` returns a distinct Date instance on every call.
+ * @param {Map<string, Array>} a
+ * @param {Map<string, Array>} b
+ * @returns {boolean}
+ */
+function watchedValuesEqual(a, b) {
+  for (const [sheetName, valuesA] of a) {
+    const valuesB = b.get(sheetName);
+    if (!valuesB || valuesA.length !== valuesB.length) return false;
+    for (let i = 0; i < valuesA.length; i++) {
+      const x = valuesA[i];
+      const y = valuesB[i];
+      const equal = x instanceof Date && y instanceof Date ? x.getTime() === y.getTime() : x === y;
+      if (!equal) return false;
+    }
+  }
+  return true;
 }
