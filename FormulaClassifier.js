@@ -99,7 +99,7 @@ function classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) {
  * before freezing, whether any of those specific cells are still showing
  * the "Loading..." placeholder).
  * @param {string[]} formulaRow - One row from Range.getFormulas().
- * @param {Array} valueRow - The corresponding row from Range.getValues().
+ * @param {any[]} valueRow - The corresponding row from Range.getValues().
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
  * @returns {number[]} 0-based column indices, ascending.

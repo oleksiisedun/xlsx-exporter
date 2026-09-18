@@ -31,6 +31,19 @@ function deleteSheetsByName(spreadsheet, sheetNames) {
 }
 
 /**
+ * Returns the sheet with the given name, throwing a descriptive error instead
+ * of returning null (which `Spreadsheet.getSheetByName` does when it's missing).
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
+ * @param {string} sheetName
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function getRequiredSheet(spreadsheet, sheetName) {
+  const sheet = spreadsheet.getSheetByName(sheetName);
+  if (!sheet) throw new Error(`Sheet "${sheetName}" not found in spreadsheet "${spreadsheet.getName()}".`);
+  return sheet;
+}
+
+/**
  * Builds a map from named-range name to the name of the sheet its range lives on.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
  * @returns {Map<string,string>}
@@ -78,7 +91,7 @@ function buildNamedRangeSheetMap(spreadsheet) {
  */
 function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames) {
   includedSheetNames.forEach((sheetName) => {
-    const sourceSheet = sourceSpreadsheet.getSheetByName(sheetName);
+    const sourceSheet = getRequiredSheet(sourceSpreadsheet, sheetName);
     const dataRange = sourceSheet.getDataRange();
     const numRows = dataRange.getNumRows();
     const numCols = dataRange.getNumColumns();
@@ -86,7 +99,7 @@ function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, included
 
     const formulas = dataRange.getFormulas();
     const values = dataRange.getValues();
-    const dupSheet = duplicateSpreadsheet.getSheetByName(sheetName);
+    const dupSheet = getRequiredSheet(duplicateSpreadsheet, sheetName);
 
     for (let r = 0; r < numRows; r++) {
       const flattenCols = getFlattenColumnIndices(formulas[r], values[r], excludedSheetNames, namedRangeSheetNames);
@@ -105,7 +118,7 @@ function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, included
  * @param {GoogleAppsScript.Spreadsheet.Sheet} dupSheet
  * @param {number} rowIndex - 0-based row index.
  * @param {number[]} flattenCols - 0-based column indices to flatten, ascending.
- * @param {Array} rowValues - The source row's values (one row from Range.getValues()).
+ * @param {any[]} rowValues - The source row's values (one row from Range.getValues()).
  * @returns {void}
  */
 function writeFlattenedRunsForRow(dupSheet, rowIndex, flattenCols, rowValues) {

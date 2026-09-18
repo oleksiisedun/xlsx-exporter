@@ -99,10 +99,11 @@ function waitForCalculationsToFinish(sourceSpreadsheet, includedSheetNames, excl
 function buildCalculationWatchLists(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames) {
   const watchLists = new Map();
   sheetNames.forEach((sheetName) => {
-    const sheet = spreadsheet.getSheetByName(sheetName);
+    const sheet = getRequiredSheet(spreadsheet, sheetName);
     const dataRange = sheet.getDataRange();
     const numRows = dataRange.getNumRows();
     const numCols = dataRange.getNumColumns();
+    /** @type {number[][]} */
     const cells = [];
     if (numRows > 0 && numCols > 0) {
       const formulas = dataRange.getFormulas();
@@ -127,7 +128,7 @@ function buildCalculationWatchLists(spreadsheet, sheetNames, excludedSheetNames,
 function findCellStillCalculating(spreadsheet, watchLists) {
   for (const [sheetName, cells] of watchLists) {
     if (cells.length === 0) continue;
-    const sheet = spreadsheet.getSheetByName(sheetName);
+    const sheet = getRequiredSheet(spreadsheet, sheetName);
     const values = sheet.getDataRange().getValues();
     for (const [r, c] of cells) {
       const row = values[r];
@@ -147,7 +148,7 @@ function findCellStillCalculating(spreadsheet, watchLists) {
  * showing 0) without ever displaying the "Loading..." placeholder.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
  * @param {Map<string, number[][]>} watchLists
- * @returns {Map<string, Array>} Sheet name -> cell values, in the same order as watchLists' [row, col] pairs.
+ * @returns {Map<string, any[]>} Sheet name -> cell values, in the same order as watchLists' [row, col] pairs.
  */
 function captureWatchedValues(spreadsheet, watchLists) {
   const snapshot = new Map();
@@ -156,7 +157,7 @@ function captureWatchedValues(spreadsheet, watchLists) {
       snapshot.set(sheetName, []);
       continue;
     }
-    const sheet = spreadsheet.getSheetByName(sheetName);
+    const sheet = getRequiredSheet(spreadsheet, sheetName);
     const values = sheet.getDataRange().getValues();
     snapshot.set(sheetName, cells.map(([r, c]) => (values[r] ? values[r][c] : undefined)));
   }
@@ -167,8 +168,8 @@ function captureWatchedValues(spreadsheet, watchLists) {
  * Compares two watched-value snapshots (from `captureWatchedValues`) for
  * exact equality, cell by cell. Dates are compared by timestamp since
  * `Range.getValues()` returns a distinct Date instance on every call.
- * @param {Map<string, Array>} a
- * @param {Map<string, Array>} b
+ * @param {Map<string, any[]>} a
+ * @param {Map<string, any[]>} b
  * @returns {boolean}
  */
 function watchedValuesEqual(a, b) {
