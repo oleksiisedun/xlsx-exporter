@@ -6,6 +6,7 @@ Google Apps Script library that exports a Google Sheets spreadsheet to a real `.
 
 - Plain `.js` Apps Script files — every function has a JSDoc comment with typed `@param`/`@returns`, per the global JS conventions.
 - Apps Script concatenates every `.js` file in the project into one global scope (no import system). The file split (`Main.js`, `FormulaClassifier.js`, `FormulaParser.js`, `SpreadsheetDuplicator.js`, `CalculationWaiter.js`, `XlsxFetch.js`, `DriveUtils.js`, `Test.js`) is purely organizational.
+- `@types/google-apps-script` is a dev-only dependency (`npm install`) that gives the editor real types for Apps Script globals (`SpreadsheetApp`, `DriveApp`, `PropertiesService`, etc.) so JSDoc `@param`/`@returns` can be checked against the real API shapes. It's never pushed to Apps Script — `node_modules`, `package.json`, and `package-lock.json` are excluded via `.claspignore`.
 
 ## Architecture summary
 
