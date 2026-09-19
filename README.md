@@ -12,7 +12,7 @@ It also solves a related problem: if you export only a subset of sheets and a fo
 
 1. Open the project in the Apps Script editor (`clasp open`, or push first with `clasp push` if you've made local changes).
 2. **Deploy > New deployment**, select type **Library**, and create the deployment. Note the **Script ID** shown under **Project Settings** (also the `scriptId` in this repo's `.clasp.json`).
-3. Each time you change the library's code, cut a new deployment version (or a new deployment) — consuming projects pin to a specific version number, so old versions keep working until the consumer explicitly updates.
+3. Each time you want to release a change, cut a new deployment version (or a new deployment) — consuming projects pin to a specific version number, so old versions keep working until the consumer explicitly updates. For testing, a consuming project can instead select the library's **Head** version, which always runs the latest pushed code.
 
 ## Connecting the library in another project
 
@@ -83,17 +83,20 @@ Every formula in an included sheet is classified as:
   - Any function name not recognized as a standard Excel-compatible function — this is what catches custom Apps Script functions without needing to enumerate them.
   - Any formula referencing (directly or via a named range) a sheet that's excluded from the export.
 
-The known-safe function list and the two blocklists live in `FormulaClassifier.js` as the single source of truth — extend them there if testing turns up a false positive.
+The known-safe function list and the two blocklists live in `src/FormulaClassifier.js` as the single source of truth — extend them there if testing turns up a false positive.
 
-**Known limitation**: a sheet name embedded inside a text argument (e.g. a `QUERY` criteria string) isn't detected by the regex-based reference scanner — but `QUERY` itself is always unsafe, so this doesn't cause data loss in practice.
+**Known limitations**:
+
+- A sheet name embedded inside a text argument (e.g. a `QUERY` criteria string) isn't detected by the regex-based reference scanner — but `QUERY` itself is always unsafe, so this doesn't cause data loss in practice.
+- Only cell contents are handled. Charts, pivot tables, and conditional-formatting or data-validation rules whose source range lives on an excluded sheet are **not** detected or rewritten, and are likely to break in the export (the sheet is deleted from the temporary copy). Exclude sheets only if nothing else you care about depends on them.
 
 ## How export actually happens
 
 The source spreadsheet is **never mutated**. The library duplicates it in Drive, deletes the excluded sheets from the copy, flattens unsafe-formula cells in the copy (writing values read from the untouched source, not the copy — this is what keeps a formula referencing a just-deleted sheet correct instead of showing `#REF!`), fetches the real `.xlsx` bytes via Google's native `/export?format=xlsx` endpoint, then deletes the temporary copy (retrying on transient failures).
 
-Because Apps Script can hard-kill an execution (the 6-minute timeout, or a manual stop from the Executions dashboard) without ever running its `finally` block, a temp copy can occasionally be left behind with no code able to clean it up. Every export call opportunistically sweeps the source file's parent folders for its own leftover `__xlsx_export_tmp__`-prefixed copies older than 15 minutes and trashes them, so orphans from a previous killed run get cleaned up on the next export rather than accumulating indefinitely.
+Because Apps Script can hard-kill an execution (the 6-minute timeout, or a manual stop from the Executions dashboard) without ever running its `finally` block, a temp copy can occasionally be left behind with no code able to clean it up. Every export call opportunistically sweeps the source file's parent folders (via a server-side Drive search) for its own leftover `__xlsx_export_tmp__`-prefixed copies older than 15 minutes and trashes them, so orphans from a previous killed run get cleaned up on the next export rather than accumulating indefinitely.
 
-Only cells holding their own **safe** live formula are left untouched. Every other non-blank cell is rewritten from the source value — this includes unsafe-formula cells, but also any cell with no formula of its own, because that's indistinguishable from a manually-typed literal without a formula engine: it could just as easily be the visual result of an array-producing formula anchored elsewhere (`ARRAYFORMULA`, `QUERY`, `SORT`, `IMPORTRANGE`, ...) spilling into it. Such spilled cells hold no real content — the moment their anchor is flattened from a formula into a literal, Sheets drops the spill and they go blank. Always rewriting them from the source's already-captured value prevents that data loss; rewriting an actual literal with its own unchanged value is a harmless no-op.
+Only cells holding their own **safe** live formula are left untouched. On any sheet that contains at least one unsafe formula, every other non-blank cell is rewritten from the source value — this includes the unsafe-formula cells themselves, but also any cell with no formula of its own, because that's indistinguishable from a manually-typed literal without a formula engine: it could just as easily be the visual result of an array-producing formula anchored elsewhere (`ARRAYFORMULA`, `QUERY`, `SORT`, `IMPORTRANGE`, ...) spilling into it. Such spilled cells hold no real content — the moment their anchor is flattened from a formula into a literal, Sheets drops the spill and they go blank. Always rewriting them from the source's already-captured value prevents that data loss; rewriting an actual literal with its own unchanged value is a harmless no-op. A sheet with no unsafe formula has no anchor to flatten (a spill can never cross sheets), so it is skipped entirely. Writes are batched into merged rectangles so large sheets stay within Apps Script's 6-minute execution limit.
 
 Each rewritten cell also has its data validation rule cleared before the value is written: Sheets enforces "reject invalid input" validation on programmatic writes too, and a rule sourced from a range on a just-deleted excluded sheet (or one that simply doesn't accept the flattened value's type) would otherwise make the write throw.
 
@@ -101,24 +104,30 @@ Each rewritten cell also has its data validation rule cleared before the value i
 graph TD
   Caller["Consuming Apps Script project"] --> Main["Main.js\nexportSpreadsheetToXlsxBlob()"]
 
-  subgraph Lib["xlsx-exporter library"]
-    Main --> Resolve["resolveIncludedSheetNames()"]
-    Main --> Wait["CalculationWaiter.js\nwaitForCalculationsToFinish()"]
-    Wait --> Dup["SpreadsheetDuplicator.js\nduplicate + delete excluded sheets"]
-    Main --> Flatten["SpreadsheetDuplicator.js\nflattenUnsafeFormulas()"]
-    Flatten --> Classify["FormulaClassifier.js\nclassifyFormula()"]
+  subgraph Lib["xlsx-exporter library (src/)"]
+    Main --> Resolve["Main.js\nresolveIncludedSheetNames_()"]
+    Main --> Wait["CalculationWaiter.js\nwaitForCalculationsToFinish_()"]
+    Main --> Sweep["DriveUtils.js\ncleanUpOrphanedExportTempFiles_()"]
+    Main --> Dup["SpreadsheetDuplicator.js\nduplicateSpreadsheetFile_()"]
+    Main --> Flatten["SpreadsheetDuplicator.js\nflattenUnsafeFormulas_()"]
+    Wait --> Select
+    Flatten --> Select["FormulaClassifier.js\ngetFlattenColumnsByRow_()"]
+    Select --> Classify["FormulaClassifier.js\nclassifyFormula_()"]
     Classify --> Parse["FormulaParser.js\nfunction / sheet-ref extraction"]
-    Main --> Fetch["XlsxFetch.js\nfetchXlsxBlob()"]
-    Main --> Save["DriveUtils.js\nsaveBlobToDriveFolder()"]
+    Main --> Fetch["XlsxFetch.js\nfetchXlsxBlob_()"]
+    Main --> Cleanup["DriveUtils.js\ndeleteFileWithRetry_() in finally"]
+    Main --> Save["DriveUtils.js\nsaveBlobToDriveFolder_()"]
   end
 
+  Sweep -->|"trashes stale copies"| DriveFolder[("Source's Drive folder")]
   Dup --> DriveCopy[("Temporary Drive copy")]
   Flatten --> DriveCopy
+  Cleanup -->|"trashes"| DriveCopy
   Fetch --> ExportEndpoint[("docs.google.com/.../export?format=xlsx")]
   DriveCopy --> ExportEndpoint
   Fetch --> Main
   Main -->|"Blob"| Caller
-  Save --> DriveFolder[("Destination Drive folder")]
+  Save --> DriveFolder
 ```
 
 Because `IMPORTRANGE` cells are always classified unsafe, the library never depends on the temporary Drive copy's own (unauthorized — a Drive copy is a new file ID, so it starts without `IMPORTRANGE` access grants) evaluation of that formula; the static value written into the copy always comes from the already-authorized source spreadsheet.
@@ -133,9 +142,11 @@ Before duplicating the spreadsheet, the library polls the source for exactly the
 
 ## Testing
 
-There's no automated test framework in Apps Script. `Test.js` has `testEndToEndExport()`, which you run directly from the Apps Script editor: fill in a scratch spreadsheet ID and destination Drive folder ID, then run it and open the result to verify sheet contents match expectations.
+There's no automated test framework in Apps Script, and no test harness in this repo. Test against the library's **Head** version: `clasp push`, then in a scratch consuming project (**Libraries** > this library > version **Head**) call `exportSpreadsheetToXlsxBlob` / `exportSpreadsheetToXlsxFile` directly against a scratch spreadsheet and open the result. No new deployment is needed for this.
 
-Suggested scratch spreadsheet layout for a thorough check: a `Data` sheet with safe formulas, a `Custom` sheet with a real custom Apps Script function, an `External` sheet with `IMPORTRANGE`, a `Summary` sheet with a formula referencing `Data!`, a formula/named range referencing a sheet you'll exclude, and an `ARRAYFORMULA` spilling across multiple rows/columns, and an `Excluded` sheet. Confirm: the excluded sheet is absent from the export; safe formulas are still live; `IMPORTRANGE`/custom-function/excluded-referencing cells and the full extent of the `ARRAYFORMULA`'s spilled output are static values, not blank or errored; and the original spreadsheet is completely unchanged afterward.
+After changing the orphan sweep (`cleanUpOrphanedExportTempFiles_`), also check it by hand, since a Drive search that silently matches nothing would leave orphans piling up unnoticed: copy the scratch spreadsheet into the same folder with a name starting `__xlsx_export_tmp__`, wait 15+ minutes, run any export, and confirm the copy was trashed.
+
+Suggested scratch spreadsheet layout for a thorough check: a `Data` sheet with safe formulas, a `Custom` sheet with a real custom Apps Script function, an `External` sheet with `IMPORTRANGE`, a `Summary` sheet with a formula referencing `Data!`, a formula/named range referencing a sheet you'll exclude, and an `ARRAYFORMULA` spilling across multiple rows/columns, and an `Excluded` sheet. Confirm: the excluded sheet is absent from the export; safe formulas are still live; `IMPORTRANGE`/custom-function/excluded-referencing cells and the full extent of the `ARRAYFORMULA`'s spilled output are static values, not blank or errored; and the original spreadsheet is completely unchanged afterward. Also worth adding a sheet with **no** unsafe formulas but a few tricky literals (`'00123`, `'=1+1`, a cell with rich text/links) to confirm it comes through untouched.
 
 To verify the calculation wait, add a deliberately slow custom function **defined in the scratch spreadsheet's own bound Apps Script project** (not this library — custom functions execute in the calling spreadsheet's context), e.g.:
 
@@ -147,3 +158,7 @@ function SLOW_VALUE(seconds) {
 ```
 
 Use it in a cell, trigger an edit so it starts recalculating, and immediately run the export. With a generous `calculationWaitTimeoutMs`, confirm the export waits and the real value (`'done'`, not `"Loading..."`) lands in the output. With a very small `calculationWaitTimeoutMs`, confirm the export throws, naming the correct sheet and cell. Also worth checking once: log the cell's raw value while it's still calculating (`console.log(JSON.stringify(value))`) to confirm the exact placeholder text matches `CALCULATION_LOADING_PLACEHOLDER` in `CalculationWaiter.js` for your environment/locale.
+
+## Development
+
+Everything pushed to Apps Script lives in `src/` (`.clasp.json` sets `"rootDir": "src"`); tooling config and docs at the repo root are never pushed. After `npm install`, run `npm run check` (type-check with `tsc` + ESLint) after every edit — see [CLAUDE.md](CLAUDE.md) for what each script enforces. Only `exportSpreadsheetToXlsxBlob` and `exportSpreadsheetToXlsxFile` are public; every other helper ends in `_` so Apps Script keeps it private to the library. Design rationale for the non-obvious parts lives in [`docs/decisions/`](docs/decisions/).
