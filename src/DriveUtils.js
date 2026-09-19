@@ -46,22 +46,28 @@ function deleteFileWithRetry_(fileId, maxAttempts) {
  * this reason), so only the source's parent folders need to be swept.
  * Only copies older than maxAgeMs are removed, well past any real export's
  * runtime, so a temp copy from an export still legitimately in progress is
- * never touched.
+ * never touched. Candidates are found with a server-side `title contains`
+ * search rather than by iterating every file in the folder (which is O(folder
+ * size) on every export); the `startsWith` check is kept as a safety filter
+ * since `contains` is not a strict prefix match. Verify by hand after changing
+ * the query (see docs/decisions/0004-orphaned-temp-copy-sweep.md).
  * @param {string} spreadsheetId - Source spreadsheet whose parent folders to sweep.
  * @param {string} tempFilePrefix - Name prefix identifying this library's temp copies.
- * @param {number} [maxAgeMs] - Minimum age before an orphaned copy is trashed.
+ * @param {number} [maxAgeMs] - Minimum age before an orphaned copy is trashed. Defaults to 15 minutes; pass 0 to sweep regardless of age.
  * @returns {void}
  */
 function cleanUpOrphanedExportTempFiles_(spreadsheetId, tempFilePrefix, maxAgeMs) {
-  const minAge = maxAgeMs || 15 * 60 * 1000;
+  const minAge = maxAgeMs ?? 15 * 60 * 1000;
   const cutoff = Date.now() - minAge;
   const parentIterator = DriveApp.getFileById(spreadsheetId).getParents();
   const parents = [];
   while (parentIterator.hasNext()) parents.push(parentIterator.next());
   if (parents.length === 0) parents.push(DriveApp.getRootFolder());
 
+  const escapedPrefix = tempFilePrefix.replace(/[\\']/g, '\\$&');
+  const query = `title contains '${escapedPrefix}' and trashed = false`;
   parents.forEach((folder) => {
-    const files = folder.getFiles();
+    const files = folder.searchFiles(query);
     while (files.hasNext()) {
       const file = files.next();
       if (!file.getName().startsWith(tempFilePrefix)) continue;
