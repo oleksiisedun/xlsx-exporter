@@ -35,8 +35,9 @@ function deleteSheetsByName_(spreadsheet, sheetNames) {
  * (read-only — the source is never mutated), classifies each formula, and
  * writes flattened values into the corresponding sheet of the DUPLICATE
  * spreadsheet. Cells holding their own SAFE live formula are left completely
- * untouched; everything else non-blank is (re)written from the source value,
- * for two different reasons:
+ * untouched; every other non-blank cell of a sheet that contains at least one
+ * UNSAFE formula is (re)written from the source value, for two different
+ * reasons:
  * - A cell with its own UNSAFE formula is flattened because that formula
  *   won't survive the export.
  * - A cell with NO formula of its own (Range.getFormulas() returns "") is
@@ -48,7 +49,9 @@ function deleteSheetsByName_(spreadsheet, sheetNames) {
  *   formula into a literal, Sheets drops the spill and they go blank. Since
  *   we already have the source's correct value for every such cell in hand,
  *   always re-writing it guarantees no data loss; re-writing an actual
- *   literal with its own unchanged value is a harmless no-op.
+ *   literal with its own unchanged value is a harmless no-op. A sheet with
+ *   no UNSAFE formula has no anchor to flatten, so it is skipped entirely
+ *   (see `getFlattenColumnsByRow_`).
  *
  * Because the source is read directly (not the duplicate), this stays
  * correct even though excluded sheets have already been deleted from the
@@ -67,44 +70,81 @@ function flattenUnsafeFormulas_(sourceSpreadsheet, duplicateSpreadsheet, include
   includedSheetNames.forEach((sheetName) => {
     const sourceSheet = getRequiredSheet_(sourceSpreadsheet, sheetName);
     const dataRange = sourceSheet.getDataRange();
-    const numRows = dataRange.getNumRows();
-    const numCols = dataRange.getNumColumns();
-    if (numRows === 0 || numCols === 0) return;
+    if (dataRange.getNumRows() === 0 || dataRange.getNumColumns() === 0) return;
 
-    const formulas = dataRange.getFormulas();
     const values = dataRange.getValues();
-    const dupSheet = getRequiredSheet_(duplicateSpreadsheet, sheetName);
+    const flattenColsByRow = getFlattenColumnsByRow_(dataRange.getFormulas(), values, excludedSheetNames, namedRangeSheetNames);
+    if (flattenColsByRow.every((cols) => cols.length === 0)) return;
 
-    for (let r = 0; r < numRows; r++) {
-      const flattenCols = getFlattenColumnIndices(formulas[r], values[r], excludedSheetNames, namedRangeSheetNames);
-      writeFlattenedRunsForRow(dupSheet, r, flattenCols, values[r]);
-    }
+    writeFlattenedRectangles_(getRequiredSheet_(duplicateSpreadsheet, sheetName), mergeColumnsIntoRectangles_(flattenColsByRow), values);
   });
 }
 
 /**
- * Writes static values into contiguous runs of columns within a single row,
- * clearing data validation on each run first. A rule that validates against
- * a list sourced from a now-deleted excluded sheet (or simply doesn't accept
- * the flattened value's type) would otherwise make Range.setValues() throw,
- * since Sheets enforces "reject invalid input" validation on programmatic
- * writes just like on manual entry.
+ * @typedef {Object} CellRectangle
+ * @property {number} row - 0-based top row.
+ * @property {number} col - 0-based left column.
+ * @property {number} numRows
+ * @property {number} numCols
+ */
+
+/**
+ * Merges per-row column selections into the fewest rectangles: contiguous
+ * columns within a row form a run, and runs with identical column extent on
+ * consecutive rows are stacked into one rectangle. This keeps the number of
+ * Sheets API calls proportional to the number of distinct blocks rather than
+ * to rows x runs, which is what keeps large sheets inside Apps Script's
+ * 6-minute execution limit.
+ * @param {number[][]} flattenColsByRow - Per row, 0-based column indices, ascending.
+ * @returns {CellRectangle[]}
+ */
+function mergeColumnsIntoRectangles_(flattenColsByRow) {
+  /** @type {CellRectangle[]} */
+  const rectangles = [];
+  /** @type {Map<string, CellRectangle>} Rectangles that end on the previous row, keyed by column extent. */
+  let openRectangles = new Map();
+
+  flattenColsByRow.forEach((cols, row) => {
+    /** @type {Map<string, CellRectangle>} */
+    const nextOpenRectangles = new Map();
+    let i = 0;
+    while (i < cols.length) {
+      let j = i;
+      while (j + 1 < cols.length && cols[j + 1] === cols[j] + 1) j++;
+      const col = cols[i];
+      const numCols = cols[j] - col + 1;
+      const key = `${col}:${numCols}`;
+
+      let rectangle = openRectangles.get(key);
+      if (rectangle) {
+        rectangle.numRows++;
+      } else {
+        rectangle = { row, col, numRows: 1, numCols };
+        rectangles.push(rectangle);
+      }
+      nextOpenRectangles.set(key, rectangle);
+      i = j + 1;
+    }
+    openRectangles = nextOpenRectangles;
+  });
+  return rectangles;
+}
+
+/**
+ * Writes static values into each rectangle, clearing data validation on it
+ * first. A rule that validates against a list sourced from a now-deleted
+ * excluded sheet (or simply doesn't accept the flattened value's type) would
+ * otherwise make Range.setValues() throw, since Sheets enforces "reject
+ * invalid input" validation on programmatic writes just like on manual entry.
  * @param {GoogleAppsScript.Spreadsheet.Sheet} dupSheet
- * @param {number} rowIndex - 0-based row index.
- * @param {number[]} flattenCols - 0-based column indices to flatten, ascending.
- * @param {any[]} rowValues - The source row's values (one row from Range.getValues()).
+ * @param {CellRectangle[]} rectangles
+ * @param {any[][]} values - The source data range's values, indexed from the sheet's top-left cell (A1).
  * @returns {void}
  */
-function writeFlattenedRunsForRow(dupSheet, rowIndex, flattenCols, rowValues) {
-  let i = 0;
-  while (i < flattenCols.length) {
-    let j = i;
-    while (j + 1 < flattenCols.length && flattenCols[j + 1] === flattenCols[j] + 1) j++;
-    const startCol = flattenCols[i];
-    const runLength = flattenCols[j] - startCol + 1;
-    const range = dupSheet.getRange(rowIndex + 1, startCol + 1, 1, runLength);
+function writeFlattenedRectangles_(dupSheet, rectangles, values) {
+  rectangles.forEach(({ row, col, numRows, numCols }) => {
+    const range = dupSheet.getRange(row + 1, col + 1, numRows, numCols);
     range.clearDataValidations();
-    range.setValues([rowValues.slice(startCol, startCol + runLength)]);
-    i = j + 1;
-  }
+    range.setValues(values.slice(row, row + numRows).map((rowValues) => rowValues.slice(col, col + numCols)));
+  });
 }

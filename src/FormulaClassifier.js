@@ -90,33 +90,45 @@ function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
 }
 
 /**
- * Determines which 0-based column indices in a single row must be flattened
- * to a static value for the export: either the cell holds its own UNSAFE
- * formula, or it holds no formula of its own but a non-blank value (a spill
- * cell or a plain literal — see the block comment above
+ * Determines, for every row of a sheet, which 0-based column indices must be
+ * flattened to a static value for the export: either the cell holds its own
+ * UNSAFE formula, or it holds no formula of its own but a non-blank value
+ * (a spill cell or a plain literal — see the block comment above
  * `flattenUnsafeFormulas_` in SpreadsheetDuplicator.js for why those are
- * indistinguishable and both get rewritten). This is the single source of
- * truth for "which cells get their value frozen into the export" — reused
- * by both `flattenUnsafeFormulas_` (which does the freezing) and
- * `buildCalculationWatchLists_` in CalculationWaiter.js (which needs to know,
- * before freezing, whether any of those specific cells are still showing
- * the "Loading..." placeholder).
- * @param {string[]} formulaRow - One row from Range.getFormulas().
- * @param {any[]} valueRow - The corresponding row from Range.getValues().
+ * indistinguishable and both get rewritten).
+ *
+ * Formula-less cells are only selected when the sheet contains at least one
+ * UNSAFE formula. The reason to rewrite them at all is that flattening an
+ * anchor drops its spill, and a spill can never cross sheets — so a sheet
+ * with no unsafe formula has no anchor to flatten, nothing to protect, and
+ * is left completely untouched (which also avoids needlessly re-parsing
+ * every literal in it through `setValues()`).
+ *
+ * This is the single source of truth for "which cells get their value frozen
+ * into the export" — reused by both `flattenUnsafeFormulas_` (which does the
+ * freezing) and `buildCalculationWatchLists_` in CalculationWaiter.js (which
+ * needs to know, before freezing, whether any of those specific cells are
+ * still showing the "Loading..." placeholder).
+ * @param {string[][]} formulas - From Range.getFormulas().
+ * @param {any[][]} values - The corresponding grid from Range.getValues().
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
- * @returns {number[]} 0-based column indices, ascending.
+ * @returns {number[][]} Per row, the 0-based column indices to flatten, ascending.
  */
-function getFlattenColumnIndices(formulaRow, valueRow, excludedSheetNames, namedRangeSheetNames) {
-  const cols = [];
-  for (let c = 0; c < formulaRow.length; c++) {
-    const formula = formulaRow[c];
-    const value = valueRow[c];
-    if (!formula) {
-      if (value !== '' && value !== null) cols.push(c);
-    } else if (classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE') {
-      cols.push(c);
-    }
-  }
-  return cols;
+function getFlattenColumnsByRow_(formulas, values, excludedSheetNames, namedRangeSheetNames) {
+  const unsafeByRow = formulas.map((row) => row.map(
+    (formula) => formula !== '' && classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE'
+  ));
+  const sheetHasUnsafeFormula = unsafeByRow.some((row) => row.includes(true));
+
+  return formulas.map((formulaRow, r) => {
+    /** @type {number[]} */
+    const cols = [];
+    formulaRow.forEach((formula, c) => {
+      const value = values[r][c];
+      const isFormulaLessValue = !formula && value !== '' && value !== null;
+      if (formula ? unsafeByRow[r][c] : sheetHasUnsafeFormula && isFormulaLessValue) cols.push(c);
+    });
+    return cols;
+  });
 }

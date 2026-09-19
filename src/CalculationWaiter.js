@@ -15,7 +15,7 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
 /**
  * Blocks until every cell that `flattenUnsafeFormulas_` (SpreadsheetDuplicator.js)
  * would bake into the export as a static value — i.e. every cell
- * `getFlattenColumnIndices` (FormulaClassifier.js) selects — has finished
+ * `getFlattenColumnsByRow_` (FormulaClassifier.js) selects — has finished
  * calculating on the SOURCE spreadsheet, or throws once `timeoutMs` elapses.
  *
  * Only that exact cell set is checked, not every cell in the included
@@ -87,7 +87,7 @@ function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, exc
 
 /**
  * Precomputes, once per included sheet, the exact 0-based [row, col] pairs
- * that `getFlattenColumnIndices` says will be baked into the export as a
+ * that `getFlattenColumnsByRow_` says will be baked into the export as a
  * static value. Built once because the underlying formula text can't change
  * while this function is only waiting on values to settle.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
@@ -108,10 +108,8 @@ function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames
     if (numRows > 0 && numCols > 0) {
       const formulas = dataRange.getFormulas();
       const values = dataRange.getValues();
-      for (let r = 0; r < numRows; r++) {
-        getFlattenColumnIndices(formulas[r], values[r], excludedSheetNames, namedRangeSheetNames)
-          .forEach((c) => cells.push([r, c]));
-      }
+      getFlattenColumnsByRow_(formulas, values, excludedSheetNames, namedRangeSheetNames)
+        .forEach((cols, r) => cols.forEach((c) => cells.push([r, c])));
     }
     watchLists.set(sheetName, cells);
   });
