@@ -69,18 +69,18 @@ const KNOWN_EXCEL_COMPATIBLE_FUNCTIONS = new Set([
  * @param {Map<string,string>} namedRangeSheetNames - Named range name -> sheet name its range lives on.
  * @returns {'SAFE'|'UNSAFE'}
  */
-function classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) {
-  const stripped = stripStringLiterals(formula);
-  const functionNames = extractFunctionNames(stripped);
+function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
+  const stripped = stripStringLiterals_(formula);
+  const functionNames = extractFunctionNames_(stripped);
 
   if (functionNames.some((name) => ALWAYS_FLATTEN_FUNCTIONS.has(name))) return 'UNSAFE';
   if (functionNames.some((name) => UNSAFE_SHEETS_ONLY_FUNCTIONS.has(name))) return 'UNSAFE';
   if (functionNames.some((name) => !KNOWN_EXCEL_COMPATIBLE_FUNCTIONS.has(name))) return 'UNSAFE';
 
-  const referencedSheets = extractSheetQualifiedReferences(stripped);
+  const referencedSheets = extractSheetQualifiedReferences_(stripped);
   if (referencedSheets.some((name) => excludedSheetNames.has(name))) return 'UNSAFE';
 
-  const bareIdentifiers = extractBareIdentifiers(stripped);
+  const bareIdentifiers = extractBareIdentifiers_(stripped);
   for (const id of bareIdentifiers) {
     const sheetName = namedRangeSheetNames.get(id);
     if (sheetName && excludedSheetNames.has(sheetName)) return 'UNSAFE';
@@ -94,11 +94,11 @@ function classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) {
  * to a static value for the export: either the cell holds its own UNSAFE
  * formula, or it holds no formula of its own but a non-blank value (a spill
  * cell or a plain literal — see the block comment above
- * `flattenUnsafeFormulas` in SpreadsheetDuplicator.js for why those are
+ * `flattenUnsafeFormulas_` in SpreadsheetDuplicator.js for why those are
  * indistinguishable and both get rewritten). This is the single source of
  * truth for "which cells get their value frozen into the export" — reused
- * by both `flattenUnsafeFormulas` (which does the freezing) and
- * `buildCalculationWatchLists` in CalculationWaiter.js (which needs to know,
+ * by both `flattenUnsafeFormulas_` (which does the freezing) and
+ * `buildCalculationWatchLists_` in CalculationWaiter.js (which needs to know,
  * before freezing, whether any of those specific cells are still showing
  * the "Loading..." placeholder).
  * @param {string[]} formulaRow - One row from Range.getFormulas().
@@ -114,7 +114,7 @@ function getFlattenColumnIndices(formulaRow, valueRow, excludedSheetNames, named
     const value = valueRow[c];
     if (!formula) {
       if (value !== '' && value !== null) cols.push(c);
-    } else if (classifyFormula(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE') {
+    } else if (classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE') {
       cols.push(c);
     }
   }

@@ -3,7 +3,7 @@
  * @param {string} spreadsheetFileId
  * @returns {GoogleAppsScript.Base.Blob}
  */
-function fetchXlsxBlob(spreadsheetFileId) {
+function fetchXlsxBlob_(spreadsheetFileId) {
   const url = `https://docs.google.com/spreadsheets/d/${spreadsheetFileId}/export?format=xlsx`;
   const response = UrlFetchApp.fetch(url, {
     headers: { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` },

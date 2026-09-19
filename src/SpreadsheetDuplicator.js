@@ -3,14 +3,14 @@
  * explicitly in the source's own parent folder (or Drive's root, if the
  * source has none). Without an explicit destination, `File.makeCopy(name)`
  * drops the copy in the current user's Drive root regardless of where the
- * source lives — which would silently break `cleanUpOrphanedExportTempFiles`
+ * source lives — which would silently break `cleanUpOrphanedExportTempFiles_`
  * in DriveUtils.js, since it searches the source's parent folder(s) for
  * leftover copies and would never find any placed in root instead.
  * @param {string} spreadsheetId
  * @param {string} copyName
  * @returns {GoogleAppsScript.Drive.File}
  */
-function duplicateSpreadsheetFile(spreadsheetId, copyName) {
+function duplicateSpreadsheetFile_(spreadsheetId, copyName) {
   const sourceFile = DriveApp.getFileById(spreadsheetId);
   const parentIterator = sourceFile.getParents();
   const destinationFolder = parentIterator.hasNext() ? parentIterator.next() : DriveApp.getRootFolder();
@@ -23,7 +23,7 @@ function duplicateSpreadsheetFile(spreadsheetId, copyName) {
  * @param {string[]} sheetNames
  * @returns {void}
  */
-function deleteSheetsByName(spreadsheet, sheetNames) {
+function deleteSheetsByName_(spreadsheet, sheetNames) {
   sheetNames.forEach((name) => {
     const sheet = spreadsheet.getSheetByName(name);
     if (sheet) spreadsheet.deleteSheet(sheet);
@@ -37,7 +37,7 @@ function deleteSheetsByName(spreadsheet, sheetNames) {
  * @param {string} sheetName
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function getRequiredSheet(spreadsheet, sheetName) {
+function getRequiredSheet_(spreadsheet, sheetName) {
   const sheet = spreadsheet.getSheetByName(sheetName);
   if (!sheet) throw new Error(`Sheet "${sheetName}" not found in spreadsheet "${spreadsheet.getName()}".`);
   return sheet;
@@ -48,7 +48,7 @@ function getRequiredSheet(spreadsheet, sheetName) {
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
  * @returns {Map<string,string>}
  */
-function buildNamedRangeSheetMap(spreadsheet) {
+function buildNamedRangeSheetMap_(spreadsheet) {
   const map = new Map();
   spreadsheet.getNamedRanges().forEach((namedRange) => {
     map.set(namedRange.getName(), namedRange.getRange().getSheet().getName());
@@ -89,9 +89,9 @@ function buildNamedRangeSheetMap(spreadsheet) {
  * @param {Map<string,string>} namedRangeSheetNames
  * @returns {void}
  */
-function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames) {
+function flattenUnsafeFormulas_(sourceSpreadsheet, duplicateSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames) {
   includedSheetNames.forEach((sheetName) => {
-    const sourceSheet = getRequiredSheet(sourceSpreadsheet, sheetName);
+    const sourceSheet = getRequiredSheet_(sourceSpreadsheet, sheetName);
     const dataRange = sourceSheet.getDataRange();
     const numRows = dataRange.getNumRows();
     const numCols = dataRange.getNumColumns();
@@ -99,7 +99,7 @@ function flattenUnsafeFormulas(sourceSpreadsheet, duplicateSpreadsheet, included
 
     const formulas = dataRange.getFormulas();
     const values = dataRange.getValues();
-    const dupSheet = getRequiredSheet(duplicateSpreadsheet, sheetName);
+    const dupSheet = getRequiredSheet_(duplicateSpreadsheet, sheetName);
 
     for (let r = 0; r < numRows; r++) {
       const flattenCols = getFlattenColumnIndices(formulas[r], values[r], excludedSheetNames, namedRangeSheetNames);

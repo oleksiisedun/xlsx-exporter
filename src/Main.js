@@ -42,26 +42,26 @@ function exportSpreadsheetToXlsxBlob(options) {
   }
   const resolvedSpreadsheetId = sourceSs.getId();
   const allSheetNames = sourceSs.getSheets().map((s) => s.getName());
-  const includedSheetNames = resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets);
+  const includedSheetNames = resolveIncludedSheetNames_(allSheetNames, includeSheets, excludeSheets);
   const excludedSheetNamesSet = new Set(allSheetNames.filter((n) => !includedSheetNames.includes(n)));
-  const namedRangeSheetNames = buildNamedRangeSheetMap(sourceSs);
+  const namedRangeSheetNames = buildNamedRangeSheetMap_(sourceSs);
 
-  waitForCalculationsToFinish(sourceSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, calculationWaitTimeoutMs, calculationWaitPollIntervalMs);
+  waitForCalculationsToFinish_(sourceSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, calculationWaitTimeoutMs, calculationWaitPollIntervalMs);
 
   const baseFileName = fileName || sourceSs.getName();
-  const timestampedFileName = buildTimestampedFileName(baseFileName, sourceSs.getSpreadsheetTimeZone());
+  const timestampedFileName = buildTimestampedFileName_(baseFileName, sourceSs.getSpreadsheetTimeZone());
 
-  cleanUpOrphanedExportTempFiles(resolvedSpreadsheetId, XLSX_EXPORT_TEMP_FILE_PREFIX);
-  const copiedFile = duplicateSpreadsheetFile(resolvedSpreadsheetId, `${XLSX_EXPORT_TEMP_FILE_PREFIX}${baseFileName}__${Date.now()}`);
+  cleanUpOrphanedExportTempFiles_(resolvedSpreadsheetId, XLSX_EXPORT_TEMP_FILE_PREFIX);
+  const copiedFile = duplicateSpreadsheetFile_(resolvedSpreadsheetId, `${XLSX_EXPORT_TEMP_FILE_PREFIX}${baseFileName}__${Date.now()}`);
 
   try {
     const dupSs = SpreadsheetApp.openById(copiedFile.getId());
-    deleteSheetsByName(dupSs, [...excludedSheetNamesSet]);
-    flattenUnsafeFormulas(sourceSs, dupSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames);
+    deleteSheetsByName_(dupSs, [...excludedSheetNamesSet]);
+    flattenUnsafeFormulas_(sourceSs, dupSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames);
     SpreadsheetApp.flush();
-    return fetchXlsxBlob(copiedFile.getId()).setName(`${timestampedFileName}.xlsx`);
+    return fetchXlsxBlob_(copiedFile.getId()).setName(`${timestampedFileName}.xlsx`);
   } finally {
-    deleteFileWithRetry(copiedFile.getId());
+    deleteFileWithRetry_(copiedFile.getId());
   }
 }
 
@@ -74,7 +74,7 @@ function exportSpreadsheetToXlsxBlob(options) {
  */
 function exportSpreadsheetToXlsxFile(options, folderId, fileName) {
   const blob = exportSpreadsheetToXlsxBlob(options);
-  return saveBlobToDriveFolder(blob, folderId, fileName);
+  return saveBlobToDriveFolder_(blob, folderId, fileName);
 }
 
 /**
@@ -83,7 +83,7 @@ function exportSpreadsheetToXlsxFile(options, folderId, fileName) {
  * @param {string} timeZone - IANA time zone, e.g. from Spreadsheet.getSpreadsheetTimeZone().
  * @returns {string}
  */
-function buildTimestampedFileName(baseFileName, timeZone) {
+function buildTimestampedFileName_(baseFileName, timeZone) {
   const timestamp = Utilities.formatDate(new Date(), timeZone, 'dd.MM.yyyy HH:mm');
   return `${baseFileName} ${timestamp}`;
 }
@@ -97,7 +97,7 @@ function buildTimestampedFileName(baseFileName, timeZone) {
  * @param {string[]|undefined} excludeSheets
  * @returns {string[]}
  */
-function resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets) {
+function resolveIncludedSheetNames_(allSheetNames, includeSheets, excludeSheets) {
   const hasInclude = Array.isArray(includeSheets) && includeSheets.length > 0;
   const hasExclude = Array.isArray(excludeSheets) && excludeSheets.length > 0;
   if (hasInclude && hasExclude) {
@@ -106,11 +106,11 @@ function resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets) 
 
   const allSet = new Set(allSheetNames);
   if (hasInclude) {
-    assertSheetNamesExist(includeSheets, allSet, 'includeSheets');
+    assertSheetNamesExist_(includeSheets, allSet, 'includeSheets');
     return allSheetNames.filter((name) => includeSheets.includes(name));
   }
 
-  if (hasExclude) assertSheetNamesExist(excludeSheets, allSet, 'excludeSheets');
+  if (hasExclude) assertSheetNamesExist_(excludeSheets, allSet, 'excludeSheets');
   const excludeSet = new Set(excludeSheets || []);
   const included = allSheetNames.filter((name) => !excludeSet.has(name));
   if (included.length === 0) {
@@ -125,7 +125,7 @@ function resolveIncludedSheetNames(allSheetNames, includeSheets, excludeSheets) 
  * @param {string} optionLabel
  * @returns {void}
  */
-function assertSheetNamesExist(names, allSheetNamesSet, optionLabel) {
+function assertSheetNamesExist_(names, allSheetNamesSet, optionLabel) {
   const missing = names.filter((name) => !allSheetNamesSet.has(name));
   if (missing.length > 0) {
     throw new Error(`exportSpreadsheetToXlsxBlob: ${optionLabel} contains unknown sheet name(s): ${missing.join(', ')}`);

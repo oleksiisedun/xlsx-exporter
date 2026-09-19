@@ -4,7 +4,7 @@
  * @param {string} formula
  * @returns {string}
  */
-function stripStringLiterals(formula) {
+function stripStringLiterals_(formula) {
   return formula.replace(/"(?:[^"\\]|\\.)*"/g, '""');
 }
 
@@ -13,7 +13,7 @@ function stripStringLiterals(formula) {
  * @param {string} formulaWithoutStrings
  * @returns {string[]} Upper-cased, de-duplicated function names.
  */
-function extractFunctionNames(formulaWithoutStrings) {
+function extractFunctionNames_(formulaWithoutStrings) {
   const names = new Set();
   const re = /([A-Za-z_][A-Za-z0-9_.]*)\s*\(/g;
   let m;
@@ -29,7 +29,7 @@ const SHEET_REF_RE = /'((?:[^']|'')*)'!|([A-Za-z_][A-Za-z0-9_.]*)!/g;
  * @param {string} formulaWithoutStrings
  * @returns {string[]} Unescaped sheet names (de-duplicated).
  */
-function extractSheetQualifiedReferences(formulaWithoutStrings) {
+function extractSheetQualifiedReferences_(formulaWithoutStrings) {
   const names = new Set();
   let m;
   SHEET_REF_RE.lastIndex = 0;
@@ -55,7 +55,7 @@ function extractSheetQualifiedReferences(formulaWithoutStrings) {
  * @param {string} formulaWithoutStrings
  * @returns {string[]}
  */
-function extractBareIdentifiers(formulaWithoutStrings) {
+function extractBareIdentifiers_(formulaWithoutStrings) {
   const withoutSheetRefs = formulaWithoutStrings.replace(SHEET_REF_RE, '');
   const found = new Set();
   const re = /\b([A-Za-z_][A-Za-z0-9_.]*)\b(?!\s*\()/g;

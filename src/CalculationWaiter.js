@@ -13,7 +13,7 @@
 const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
 
 /**
- * Blocks until every cell that `flattenUnsafeFormulas` (SpreadsheetDuplicator.js)
+ * Blocks until every cell that `flattenUnsafeFormulas_` (SpreadsheetDuplicator.js)
  * would bake into the export as a static value — i.e. every cell
  * `getFlattenColumnIndices` (FormulaClassifier.js) selects — has finished
  * calculating on the SOURCE spreadsheet, or throws once `timeoutMs` elapses.
@@ -34,7 +34,7 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
  * array steps (LET/FILTER/CHOOSECOLS...). Relying solely on the placeholder
  * check let exactly this slip through: the loop saw no "Loading..." on the
  * very first read and exited immediately, and the later, separate read in
- * `flattenUnsafeFormulas` baked in that same stale 0. To guard against this,
+ * `flattenUnsafeFormulas_` baked in that same stale 0. To guard against this,
  * a poll only counts as settled once two consecutive reads — spaced
  * `pollIntervalMs` apart — see no "Loading..." AND report identical values
  * for every watched cell; any change between polls resets the count.
@@ -52,20 +52,20 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
  * @param {number} [pollIntervalMs] - Delay between re-checks. Defaults to 3000 (3s); floored at 250ms.
  * @returns {void}
  */
-function waitForCalculationsToFinish(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, timeoutMs, pollIntervalMs) {
+function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, timeoutMs, pollIntervalMs) {
   const timeout = timeoutMs ?? 120000;
   if (timeout === 0) return;
   const interval = Math.max(pollIntervalMs ?? 3000, 250);
 
-  const watchLists = buildCalculationWatchLists(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames);
+  const watchLists = buildCalculationWatchLists_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames);
   const deadline = Date.now() + timeout;
 
   let previousValues = null;
   while (true) {
-    const stillCalculating = findCellStillCalculating(sourceSpreadsheet, watchLists);
+    const stillCalculating = findCellStillCalculating_(sourceSpreadsheet, watchLists);
     if (!stillCalculating) {
-      const currentValues = captureWatchedValues(sourceSpreadsheet, watchLists);
-      if (previousValues && watchedValuesEqual(previousValues, currentValues)) return;
+      const currentValues = captureWatchedValues_(sourceSpreadsheet, watchLists);
+      if (previousValues && watchedValuesEqual_(previousValues, currentValues)) return;
       previousValues = currentValues;
     } else {
       previousValues = null;
@@ -96,10 +96,10 @@ function waitForCalculationsToFinish(sourceSpreadsheet, includedSheetNames, excl
  * @param {Map<string,string>} namedRangeSheetNames
  * @returns {Map<string, number[][]>} Sheet name -> array of [row, col] pairs to watch.
  */
-function buildCalculationWatchLists(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames) {
+function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames) {
   const watchLists = new Map();
   sheetNames.forEach((sheetName) => {
-    const sheet = getRequiredSheet(spreadsheet, sheetName);
+    const sheet = getRequiredSheet_(spreadsheet, sheetName);
     const dataRange = sheet.getDataRange();
     const numRows = dataRange.getNumRows();
     const numCols = dataRange.getNumColumns();
@@ -125,10 +125,10 @@ function buildCalculationWatchLists(spreadsheet, sheetNames, excludedSheetNames,
  * @param {Map<string, number[][]>} watchLists
  * @returns {{sheetName: string, a1Notation: string}|null}
  */
-function findCellStillCalculating(spreadsheet, watchLists) {
+function findCellStillCalculating_(spreadsheet, watchLists) {
   for (const [sheetName, cells] of watchLists) {
     if (cells.length === 0) continue;
-    const sheet = getRequiredSheet(spreadsheet, sheetName);
+    const sheet = getRequiredSheet_(spreadsheet, sheetName);
     const values = sheet.getDataRange().getValues();
     for (const [r, c] of cells) {
       const row = values[r];
@@ -143,21 +143,21 @@ function findCellStillCalculating(spreadsheet, watchLists) {
 /**
  * Reads the current value of every watched cell, keyed by sheet name, so two
  * successive polls can be compared for equality. This is what lets
- * `waitForCalculationsToFinish` catch a cell that reports a plausible but
+ * `waitForCalculationsToFinish_` catch a cell that reports a plausible but
  * still-unsettled value (e.g. a cross-spreadsheet IMPORTRANGE briefly
  * showing 0) without ever displaying the "Loading..." placeholder.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
  * @param {Map<string, number[][]>} watchLists
  * @returns {Map<string, any[]>} Sheet name -> cell values, in the same order as watchLists' [row, col] pairs.
  */
-function captureWatchedValues(spreadsheet, watchLists) {
+function captureWatchedValues_(spreadsheet, watchLists) {
   const snapshot = new Map();
   for (const [sheetName, cells] of watchLists) {
     if (cells.length === 0) {
       snapshot.set(sheetName, []);
       continue;
     }
-    const sheet = getRequiredSheet(spreadsheet, sheetName);
+    const sheet = getRequiredSheet_(spreadsheet, sheetName);
     const values = sheet.getDataRange().getValues();
     snapshot.set(sheetName, cells.map(([r, c]) => (values[r] ? values[r][c] : undefined)));
   }
@@ -165,14 +165,14 @@ function captureWatchedValues(spreadsheet, watchLists) {
 }
 
 /**
- * Compares two watched-value snapshots (from `captureWatchedValues`) for
+ * Compares two watched-value snapshots (from `captureWatchedValues_`) for
  * exact equality, cell by cell. Dates are compared by timestamp since
  * `Range.getValues()` returns a distinct Date instance on every call.
  * @param {Map<string, any[]>} a
  * @param {Map<string, any[]>} b
  * @returns {boolean}
  */
-function watchedValuesEqual(a, b) {
+function watchedValuesEqual_(a, b) {
   for (const [sheetName, valuesA] of a) {
     const valuesB = b.get(sheetName);
     if (!valuesB || valuesA.length !== valuesB.length) return false;

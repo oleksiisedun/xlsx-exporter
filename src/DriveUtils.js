@@ -5,7 +5,7 @@
  * @param {string} [fileName] - Overrides the blob's current name if provided.
  * @returns {GoogleAppsScript.Drive.File}
  */
-function saveBlobToDriveFolder(blob, folderId, fileName) {
+function saveBlobToDriveFolder_(blob, folderId, fileName) {
   const folder = DriveApp.getFolderById(folderId);
   return folder.createFile(fileName ? blob.setName(fileName) : blob);
 }
@@ -18,7 +18,7 @@ function saveBlobToDriveFolder(blob, folderId, fileName) {
  * @param {number} [maxAttempts]
  * @returns {void}
  */
-function deleteFileWithRetry(fileId, maxAttempts) {
+function deleteFileWithRetry_(fileId, maxAttempts) {
   const attempts = maxAttempts || 3;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -41,7 +41,7 @@ function deleteFileWithRetry(fileId, maxAttempts) {
  * 6-minute timeout, or a manual stop from the Executions dashboard), the
  * process is torn down immediately and `finally` never runs — there is no
  * error to catch and no cleanup code executes at all. Copies are made
- * alongside the source file (`duplicateSpreadsheetFile` in
+ * alongside the source file (`duplicateSpreadsheetFile_` in
  * SpreadsheetDuplicator.js passes an explicit destination folder for exactly
  * this reason), so only the source's parent folders need to be swept.
  * Only copies older than maxAgeMs are removed, well past any real export's
@@ -52,7 +52,7 @@ function deleteFileWithRetry(fileId, maxAttempts) {
  * @param {number} [maxAgeMs] - Minimum age before an orphaned copy is trashed.
  * @returns {void}
  */
-function cleanUpOrphanedExportTempFiles(spreadsheetId, tempFilePrefix, maxAgeMs) {
+function cleanUpOrphanedExportTempFiles_(spreadsheetId, tempFilePrefix, maxAgeMs) {
   const minAge = maxAgeMs || 15 * 60 * 1000;
   const cutoff = Date.now() - minAge;
   const parentIterator = DriveApp.getFileById(spreadsheetId).getParents();
@@ -66,7 +66,7 @@ function cleanUpOrphanedExportTempFiles(spreadsheetId, tempFilePrefix, maxAgeMs)
       const file = files.next();
       if (!file.getName().startsWith(tempFilePrefix)) continue;
       if (file.getDateCreated().getTime() > cutoff) continue;
-      deleteFileWithRetry(file.getId());
+      deleteFileWithRetry_(file.getId());
     }
   });
 }
