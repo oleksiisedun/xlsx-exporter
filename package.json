@@ -2,6 +2,15 @@
   "name": "xlsx-exporter",
   "private": true,
   "devDependencies": {
-    "@types/google-apps-script": "^2.0.13"
+    "@eslint/js": "^10.0.1",
+    "@types/google-apps-script": "^2.0.13",
+    "eslint": "^10.11.0",
+    "eslint-plugin-jsdoc": "^63.3.3",
+    "typescript": "^7.0.2"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p jsconfig.json",
+    "lint": "eslint src",
+    "check": "npm run typecheck && npm run lint"
   }
 }
