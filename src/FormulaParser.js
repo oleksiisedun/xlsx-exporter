@@ -1,11 +1,13 @@
 /**
  * Removes double-quoted string literals from a formula so their contents
- * aren't mistaken for function names or sheet references.
+ * aren't mistaken for function names or sheet references. Sheets escapes a
+ * quote inside a string by doubling it (`""`); a backslash is an ordinary
+ * character, so `"C:\"` is a complete string.
  * @param {string} formula
  * @returns {string}
  */
 function stripStringLiterals_(formula) {
-  return formula.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+  return formula.replace(/"(?:[^"]|"")*"/g, '""');
 }
 
 /**
