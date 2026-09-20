@@ -48,16 +48,17 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
  * @param {string[]} includedSheetNames
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
+ * @param {DeletedColumns} deletedColumns
  * @param {number} [timeoutMs] - Max total wait before throwing. Defaults to 120000 (2 min). Uses `??`, not `||`, so 0 is a meaningful opt-out.
  * @param {number} [pollIntervalMs] - Delay between re-checks. Defaults to 3000 (3s); floored at 250ms.
  * @returns {void}
  */
-function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, timeoutMs, pollIntervalMs) {
+function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns, timeoutMs, pollIntervalMs) {
   const timeout = timeoutMs ?? 120000;
   if (timeout === 0) return;
   const interval = Math.max(pollIntervalMs ?? 3000, 250);
 
-  const watchLists = buildCalculationWatchLists_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames);
+  const watchLists = buildCalculationWatchLists_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns);
   const deadline = Date.now() + timeout;
 
   let previousValues = null;
@@ -94,9 +95,10 @@ function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, exc
  * @param {string[]} sheetNames
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
+ * @param {DeletedColumns} deletedColumns
  * @returns {Map<string, number[][]>} Sheet name -> array of [row, col] pairs to watch.
  */
-function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames) {
+function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
   const watchLists = new Map();
   sheetNames.forEach((sheetName) => {
     const sheet = getRequiredSheet_(spreadsheet, sheetName);
@@ -108,7 +110,7 @@ function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames
     if (numRows > 0 && numCols > 0) {
       const formulas = dataRange.getFormulas();
       const values = dataRange.getValues();
-      getFlattenColumnsByRow_(formulas, values, excludedSheetNames, namedRangeSheetNames)
+      getFlattenColumnsByRow_(formulas, values, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns)
         .forEach((cols, r) => cols.forEach((c) => cells.push([r, c])));
     }
     watchLists.set(sheetName, cells);

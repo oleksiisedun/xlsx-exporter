@@ -69,3 +69,56 @@ function extractBareIdentifiers_(formulaWithoutStrings) {
   }
   return [...found];
 }
+
+/**
+ * Matches a cell/range reference with an optional sheet qualifier, in four
+ * shapes: `A1` / `A1:B2` / `A1:B` (groups `cellCol`, `rangeEndCol`), a
+ * whole-column range `A:C` (`colRangeStart`, `colRangeEnd`), and a whole-row
+ * range `2:5` (`rowRange`). `$` anchors are accepted. The lookbehind/lookahead
+ * keep it from matching inside a longer identifier or a function call such as
+ * `LOG10(`; a 1-3 letter token with no digits is only a reference in the
+ * `A:C` shape, so bare named ranges like `Tax` don't match.
+ */
+const CELL_REFERENCE_RE = new RegExp(
+  "(?<![A-Za-z0-9_.$!'])" +
+  "(?:(?:'(?<quotedSheet>(?:[^']|'')*)'|(?<plainSheet>[A-Za-z_][A-Za-z0-9_.]*))!)?" +
+  '(?:' +
+    '\\$?(?<cellCol>[A-Za-z]{1,3})\\$?\\d+(?::\\$?(?<rangeEndCol>[A-Za-z]{1,3})\\$?\\d*)?' +
+    '|\\$?(?<colRangeStart>[A-Za-z]{1,3}):\\$?(?<colRangeEnd>[A-Za-z]{1,3})' +
+    '|(?<rowRange>\\$?\\d+:\\$?\\d+)' +
+  ')' +
+  '(?![A-Za-z0-9_(.])',
+  'g'
+);
+
+/**
+ * @typedef {Object} ColumnReference
+ * @property {string|null} sheetName - Sheet the reference is qualified with, or null if unqualified (i.e. the formula's own sheet).
+ * @property {number} startCol - 0-based first column covered.
+ * @property {number} endCol - 0-based last column covered; Infinity for a whole-row reference (`2:5`), which spans every column.
+ */
+
+/**
+ * Extracts the columns touched by every cell/range reference in a formula.
+ * Used to detect formulas that read a column which will be deleted from the
+ * export. Errs toward over-matching (a false positive only flattens an
+ * otherwise-safe formula to its value).
+ * @param {string} formulaWithoutStrings
+ * @returns {ColumnReference[]}
+ */
+function extractColumnReferences_(formulaWithoutStrings) {
+  /** @type {ColumnReference[]} */
+  const references = [];
+  for (const m of formulaWithoutStrings.matchAll(CELL_REFERENCE_RE)) {
+    const g = m.groups ?? {};
+    const sheetName = g.quotedSheet !== undefined ? g.quotedSheet.replace(/''/g, "'") : g.plainSheet ?? null;
+    if (g.rowRange) {
+      references.push({ sheetName, startCol: 0, endCol: Infinity });
+      continue;
+    }
+    const firstCol = columnLettersToIndex_(g.cellCol ?? g.colRangeStart);
+    const lastCol = columnLettersToIndex_(g.rangeEndCol ?? g.colRangeEnd ?? g.cellCol);
+    references.push({ sheetName, startCol: Math.min(firstCol, lastCol), endCol: Math.max(firstCol, lastCol) });
+  }
+  return references;
+}

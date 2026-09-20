@@ -58,22 +58,25 @@ function deleteSheetsByName_(spreadsheet, sheetNames) {
  * duplicate at this point: a formula referencing an excluded sheet would
  * show #REF! if read from the duplicate, but here it's read from the source
  * where that sheet still exists and the formula still computes correctly,
- * so the static value written into the duplicate is the correct one.
+ * so the static value written into the duplicate is the correct one. The
+ * same goes for columns about to be deleted (see ColumnExclusion.js): this
+ * must run first, while every cell is still at its original position.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} sourceSpreadsheet
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} duplicateSpreadsheet
  * @param {string[]} includedSheetNames
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
+ * @param {DeletedColumns} deletedColumns
  * @returns {void}
  */
-function flattenUnsafeFormulas_(sourceSpreadsheet, duplicateSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames) {
+function flattenUnsafeFormulas_(sourceSpreadsheet, duplicateSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
   includedSheetNames.forEach((sheetName) => {
     const sourceSheet = getRequiredSheet_(sourceSpreadsheet, sheetName);
     const dataRange = sourceSheet.getDataRange();
     if (dataRange.getNumRows() === 0 || dataRange.getNumColumns() === 0) return;
 
     const values = dataRange.getValues();
-    const flattenColsByRow = getFlattenColumnsByRow_(dataRange.getFormulas(), values, excludedSheetNames, namedRangeSheetNames);
+    const flattenColsByRow = getFlattenColumnsByRow_(dataRange.getFormulas(), values, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns);
     if (flattenColsByRow.every((cols) => cols.length === 0)) return;
 
     writeFlattenedRectangles_(getRequiredSheet_(duplicateSpreadsheet, sheetName), mergeColumnsIntoRectangles_(flattenColsByRow), values);

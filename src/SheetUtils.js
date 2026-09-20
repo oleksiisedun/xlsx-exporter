@@ -23,3 +23,15 @@ function buildNamedRangeSheetMap_(spreadsheet) {
   });
   return map;
 }
+
+/**
+ * Converts A1-notation column letters to a 0-based column index
+ * ("A" -> 0, "Z" -> 25, "AA" -> 26). Case-insensitive.
+ * @param {string} letters
+ * @returns {number}
+ */
+function columnLettersToIndex_(letters) {
+  let index = 0;
+  for (const ch of letters.toUpperCase()) index = index * 26 + (ch.charCodeAt(0) - 64);
+  return index - 1;
+}

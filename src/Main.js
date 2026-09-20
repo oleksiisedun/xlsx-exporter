@@ -11,6 +11,8 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
  * @property {string} [spreadsheetId] - ID of the source Google Sheets spreadsheet. Never mutated. Defaults to the active spreadsheet (SpreadsheetApp.getActiveSpreadsheet()) if omitted — only resolvable when the library is called from a bound script context (e.g. a container-bound script or a simple/installable trigger), not from a standalone script or webapp with no active spreadsheet.
  * @property {string[]} [includeSheets] - Sheet names to include. Mutually exclusive with excludeSheets.
  * @property {string[]} [excludeSheets] - Sheet names to exclude. Mutually exclusive with includeSheets.
+ * @property {Object<string, string[]>} [excludeColumns] - Columns to remove from included sheets, as sheet name -> column specs, e.g. `{ 'Data': ['C', 'F:H'] }`. Formulas that read a deleted column are flattened to their static value. Charts, pivots and validation/conditional-format rules that reference a deleted column are not detected.
+ * @property {'delete'|'hide'} [excludeColumnsMode] - What to do with `excludeColumns`. 'delete' (default) removes them, so the data is not in the file; 'hide' only hides them, so the data is still in the file and nothing referencing them breaks.
  * @property {string} [fileName] - Base file name (no extension) for the export; defaults to the source spreadsheet's name. The current date/time is always appended.
  * @property {number} [calculationWaitTimeoutMs] - Max time (ms) to wait for pending custom-function/IMPORTRANGE calculations on the source to settle before exporting. Defaults to 120000 (2 min). Pass 0 to skip the wait entirely.
  * @property {number} [calculationWaitPollIntervalMs] - Delay (ms) between calculation-status re-checks while waiting. Defaults to 3000 (3s).
@@ -19,8 +21,9 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
 /**
  * Exports a Google Sheets spreadsheet to a real .xlsx Blob. Formulas that use a
  * Google-Sheets-only function, a dynamic/spill-producing function (INDIRECT,
- * SORT, UNIQUE, ...), or that reference a sheet excluded from the export are
- * flattened to their last computed static value; all other formulas remain
+ * SORT, UNIQUE, ...), or that reference a sheet excluded from the export (or a
+ * column deleted via `excludeColumns`) are flattened to their last computed
+ * static value; all other formulas remain
  * live in the export. The source spreadsheet is only ever read, never mutated
  * — all writes happen on a temporary Drive copy, which is deleted afterward
  * even if an error occurs. Before duplicating, the source is polled until any
@@ -32,7 +35,7 @@ const XLSX_EXPORT_TEMP_FILE_PREFIX = '__xlsx_export_tmp__';
  */
 function exportSpreadsheetToXlsxBlob(options) {
   const {
-    spreadsheetId, includeSheets, excludeSheets, fileName,
+    spreadsheetId, includeSheets, excludeSheets, excludeColumns, excludeColumnsMode, fileName,
     calculationWaitTimeoutMs, calculationWaitPollIntervalMs,
   } = options || {};
 
@@ -45,8 +48,11 @@ function exportSpreadsheetToXlsxBlob(options) {
   const includedSheetNames = resolveIncludedSheetNames_(allSheetNames, includeSheets, excludeSheets);
   const excludedSheetNamesSet = new Set(allSheetNames.filter((n) => !includedSheetNames.includes(n)));
   const namedRangeSheetNames = buildNamedRangeSheetMap_(sourceSs);
+  const columnsMode = resolveExcludeColumnsMode_(excludeColumnsMode);
+  const excludedColumnSpans = resolveExcludedColumnSpans_(sourceSs, includedSheetNames, excludeColumns, columnsMode);
+  const deletedColumns = buildDeletedColumns_(sourceSs, excludedColumnSpans, columnsMode);
 
-  waitForCalculationsToFinish_(sourceSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, calculationWaitTimeoutMs, calculationWaitPollIntervalMs);
+  waitForCalculationsToFinish_(sourceSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, deletedColumns, calculationWaitTimeoutMs, calculationWaitPollIntervalMs);
 
   const baseFileName = fileName || sourceSs.getName();
   const timestampedFileName = buildTimestampedFileName_(baseFileName, sourceSs.getSpreadsheetTimeZone());
@@ -57,7 +63,8 @@ function exportSpreadsheetToXlsxBlob(options) {
   try {
     const dupSs = SpreadsheetApp.openById(copiedFile.getId());
     deleteSheetsByName_(dupSs, [...excludedSheetNamesSet]);
-    flattenUnsafeFormulas_(sourceSs, dupSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames);
+    flattenUnsafeFormulas_(sourceSs, dupSs, includedSheetNames, excludedSheetNamesSet, namedRangeSheetNames, deletedColumns);
+    applyExcludedColumns_(dupSs, excludedColumnSpans, columnsMode);
     SpreadsheetApp.flush();
     return fetchXlsxBlob_(copiedFile.getId()).setName(`${timestampedFileName}.xlsx`);
   } finally {

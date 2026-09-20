@@ -64,12 +64,17 @@ const KNOWN_EXCEL_COMPATIBLE_FUNCTIONS = new Set([
 /**
  * Classifies a single formula string as SAFE (kept as a live formula) or
  * UNSAFE (must be flattened to its static value).
+ * A formula is also UNSAFE if it references a column that will be deleted:
+ * Sheets would turn a fully-deleted reference into #REF! and silently shrink
+ * a range that merely overlaps one, changing the result either way.
  * @param {string} formula - Formula string as returned by Range.getFormulas(), including the leading '='.
+ * @param {string} sheetName - Sheet the formula lives on; resolves its unqualified references.
  * @param {Set<string>} excludedSheetNames - Names of sheets that will NOT exist in the exported file.
  * @param {Map<string,string>} namedRangeSheetNames - Named range name -> sheet name its range lives on.
+ * @param {DeletedColumns} deletedColumns - Columns that will NOT exist in the exported file.
  * @returns {'SAFE'|'UNSAFE'}
  */
-function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
+function classifyFormula_(formula, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
   const stripped = stripStringLiterals_(formula);
   const functionNames = extractFunctionNames_(stripped);
 
@@ -80,10 +85,19 @@ function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
   const referencedSheets = extractSheetQualifiedReferences_(stripped);
   if (referencedSheets.some((name) => excludedSheetNames.has(name))) return 'UNSAFE';
 
+  if (deletedColumns.spansBySheet.size > 0) {
+    const touchesDeletedColumn = extractColumnReferences_(stripped).some((ref) => {
+      const spans = deletedColumns.spansBySheet.get(ref.sheetName ?? sheetName);
+      return spans && spans.some((span) => ref.startCol <= span.end && ref.endCol >= span.start);
+    });
+    if (touchesDeletedColumn) return 'UNSAFE';
+  }
+
   const bareIdentifiers = extractBareIdentifiers_(stripped);
   for (const id of bareIdentifiers) {
-    const sheetName = namedRangeSheetNames.get(id);
-    if (sheetName && excludedSheetNames.has(sheetName)) return 'UNSAFE';
+    const namedRangeSheetName = namedRangeSheetNames.get(id);
+    if (namedRangeSheetName && excludedSheetNames.has(namedRangeSheetName)) return 'UNSAFE';
+    if (deletedColumns.affectedNamedRanges.has(id)) return 'UNSAFE';
   }
 
   return 'SAFE';
@@ -104,6 +118,11 @@ function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
  * is left completely untouched (which also avoids needlessly re-parsing
  * every literal in it through `setValues()`).
  *
+ * Cells in a column that will be deleted are never selected (they're about to
+ * vanish), but a formula in one still counts as an unsafe formula for the
+ * sheet: deleting its column drops any spill it produced into the columns
+ * that stay, so those spilled cells need rewriting too.
+ *
  * This is the single source of truth for "which cells get their value frozen
  * into the export" — reused by both `flattenUnsafeFormulas_` (which does the
  * freezing) and `buildCalculationWatchLists_` in CalculationWaiter.js (which
@@ -111,13 +130,18 @@ function classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) {
  * still showing the "Loading..." placeholder).
  * @param {string[][]} formulas - From Range.getFormulas().
  * @param {any[][]} values - The corresponding grid from Range.getValues().
+ * @param {string} sheetName - Sheet the grid was read from.
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
+ * @param {DeletedColumns} deletedColumns
  * @returns {number[][]} Per row, the 0-based column indices to flatten, ascending.
  */
-function getFlattenColumnsByRow_(formulas, values, excludedSheetNames, namedRangeSheetNames) {
+function getFlattenColumnsByRow_(formulas, values, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
+  const deletedSpans = deletedColumns.spansBySheet.get(sheetName) ?? [];
+  const isDeletedColumn = (/** @type {number} */ c) => deletedSpans.some((span) => c >= span.start && c <= span.end);
+
   const unsafeByRow = formulas.map((row) => row.map(
-    (formula) => formula !== '' && classifyFormula_(formula, excludedSheetNames, namedRangeSheetNames) === 'UNSAFE'
+    (formula, c) => formula !== '' && (isDeletedColumn(c) || classifyFormula_(formula, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns) === 'UNSAFE')
   ));
   const sheetHasUnsafeFormula = unsafeByRow.some((row) => row.includes(true));
 
@@ -125,6 +149,7 @@ function getFlattenColumnsByRow_(formulas, values, excludedSheetNames, namedRang
     /** @type {number[]} */
     const cols = [];
     formulaRow.forEach((formula, c) => {
+      if (isDeletedColumn(c)) return;
       const value = values[r][c];
       const isFormulaLessValue = !formula && value !== '' && value !== null;
       if (formula ? unsafeByRow[r][c] : sheetHasUnsafeFormula && isFormulaLessValue) cols.push(c);
