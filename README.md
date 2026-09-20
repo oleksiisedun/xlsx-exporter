@@ -167,7 +167,7 @@ Before duplicating the spreadsheet, the library polls the source for exactly the
 
 ## Testing
 
-Pure logic has unit tests: run `npm test` (Node's built-in runner; see `test/`). Code that calls `SpreadsheetApp`/`DriveApp` can't run outside Apps Script, so test that end to end against the library's **Head** version: `clasp push`, then in a scratch consuming project (**Libraries** > this library > version **Head**) call `exportSpreadsheetToXlsxBlob` / `exportSpreadsheetToXlsxFile` directly against a scratch spreadsheet and open the result. No new deployment is needed for this.
+Pure logic has unit tests: run `npm test` (Node's built-in runner; see `tests/`). Code that calls `SpreadsheetApp`/`DriveApp` can't run outside Apps Script, so test that end to end against the library's **Head** version: `clasp push`, then in a scratch consuming project (**Libraries** > this library > version **Head**) call `exportSpreadsheetToXlsxBlob` / `exportSpreadsheetToXlsxFile` directly against a scratch spreadsheet and open the result. No new deployment is needed for this.
 
 After changing the orphan sweep (`cleanUpOrphanedExportTempFiles_`), also check it by hand, since a Drive search that silently matches nothing would leave orphans piling up unnoticed: copy the scratch spreadsheet into the same folder with a name starting `__xlsx_export_tmp__`, wait 15+ minutes, run any export, and confirm the copy was trashed.
 
