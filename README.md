@@ -42,6 +42,19 @@ const file = XlsxExporter.exportSpreadsheetToXlsxFile(
   'DRIVE_FOLDER_ID'
 );
 
+// Remove columns from a sheet (deleted by default; formulas that read them are flattened)
+const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
+  spreadsheetId: '...',
+  excludeColumns: { 'Data': ['C', 'F:H'], 'Summary': ['B'] },
+});
+
+// ...or just hide them (data stays in the file, nothing referencing them breaks)
+const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
+  spreadsheetId: '...',
+  excludeColumns: { 'Data': ['C'] },
+  excludeColumnsMode: 'hide',
+});
+
 // Tune (or skip) the wait for in-progress calculations before export
 const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
   spreadsheetId: '...',
@@ -58,7 +71,7 @@ const blob = XlsxExporter.exportSpreadsheetToXlsxBlob({
 
 `spreadsheetId` is optional — if omitted, the library falls back to `SpreadsheetApp.getActiveSpreadsheet()`, which only resolves when called from a bound script context (a container-bound script or a simple/installable trigger); calling it without `spreadsheetId` from a standalone script or webapp throws.
 
-`includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone. Pass `calculationWaitTimeoutMs: 0` to skip the calculation wait entirely — see [Waiting for pending calculations](#waiting-for-pending-calculations) below.
+`includeSheets` and `excludeSheets` are mutually exclusive — pass at most one. Passing neither exports every sheet. `excludeColumns` maps a sheet name (which must be part of the export) to column specs — `'C'` or `'F:H'`, case-insensitive; `excludeColumnsMode` is `'delete'` (default) or `'hide'`. See [Excluding columns](#excluding-columns) below. The exported file name is always the spreadsheet's name (or the `fileName` option, if given) with the current date/time appended in `DD.MM.YYYY HH:MM` format, using the source spreadsheet's own time zone. Pass `calculationWaitTimeoutMs: 0` to skip the calculation wait entirely — see [Waiting for pending calculations](#waiting-for-pending-calculations) below.
 
 ### Required scopes in the consuming project
 
@@ -82,6 +95,7 @@ Every formula in an included sheet is classified as:
   - Dynamic/spill-producing functions (`INDIRECT`, `SORT`, `UNIQUE`, `FILTER`, `SEQUENCE`, `RANDARRAY`, `ARRAYFORMULA`) — always flattened, since their target/output shape can't be statically verified.
   - Any function name not recognized as a standard Excel-compatible function — this is what catches custom Apps Script functions without needing to enumerate them.
   - Any formula referencing (directly or via a named range) a sheet that's excluded from the export.
+  - Any formula referencing (directly or via a named range) a column deleted via `excludeColumns`.
 
 The known-safe function list and the two blocklists live in `src/FormulaClassifier.js` as the single source of truth — extend them there if testing turns up a false positive.
 
@@ -90,9 +104,18 @@ The known-safe function list and the two blocklists live in `src/FormulaClassifi
 - A sheet name embedded inside a text argument (e.g. a `QUERY` criteria string) isn't detected by the regex-based reference scanner — but `QUERY` itself is always unsafe, so this doesn't cause data loss in practice.
 - Only cell contents are handled. Charts, pivot tables, and conditional-formatting or data-validation rules whose source range lives on an excluded sheet are **not** detected or rewritten, and are likely to break in the export (the sheet is deleted from the temporary copy). Exclude sheets only if nothing else you care about depends on them.
 
+## Excluding columns
+
+`excludeColumns` removes columns from sheets that are otherwise exported. Pick the mode by what you need:
+
+- **`'delete'`** (default) — the columns are gone from the file. Any formula, on any included sheet, that references a deleted column (`C2`, `$C$2`, `A1:C5`, `C:C`, `Data!C2`, a whole-row `2:2`, or a named range touching one) is classified **unsafe** and flattened to its value, because Sheets would either show `#REF!` or silently shrink a range that merely overlaps a deleted column and change its result. Formulas that only touch other columns stay live; Sheets adjusts their references for the shift.
+- **`'hide'`** — the columns are only hidden. The data is still in the file (anyone can unhide it), so don't use this to keep data private; use it when charts, pivots or validation depend on the columns, since nothing is deleted and nothing needs flattening.
+
+Columns are removed from the temporary copy after flattening. A sheet can't have every column deleted. Charts, pivot tables and validation/conditional-format rules that reference a deleted column are **not** detected (same limitation as excluded sheets). Design notes: [ADR 0007](docs/decisions/0007-exclude-columns-delete-or-hide.md).
+
 ## How export actually happens
 
-The source spreadsheet is **never mutated**. The library duplicates it in Drive, deletes the excluded sheets from the copy, flattens unsafe-formula cells in the copy (writing values read from the untouched source, not the copy — this is what keeps a formula referencing a just-deleted sheet correct instead of showing `#REF!`), fetches the real `.xlsx` bytes via Google's native `/export?format=xlsx` endpoint, then deletes the temporary copy (retrying on transient failures).
+The source spreadsheet is **never mutated**. The library duplicates it in Drive, deletes the excluded sheets from the copy, flattens unsafe-formula cells in the copy (writing values read from the untouched source, not the copy — this is what keeps a formula referencing a just-deleted sheet correct instead of showing `#REF!`), deletes or hides any `excludeColumns` columns (last, so flattening still sees original column positions), fetches the real `.xlsx` bytes via Google's native `/export?format=xlsx` endpoint, then deletes the temporary copy (retrying on transient failures).
 
 Because Apps Script can hard-kill an execution (the 6-minute timeout, or a manual stop from the Executions dashboard) without ever running its `finally` block, a temp copy can occasionally be left behind with no code able to clean it up. Every export call opportunistically sweeps the source file's parent folders (via a server-side Drive search) for its own leftover `__xlsx_export_tmp__`-prefixed copies older than 15 minutes and trashes them, so orphans from a previous killed run get cleaned up on the next export rather than accumulating indefinitely.
 
@@ -108,12 +131,13 @@ graph TD
     Main --> Resolve["Main.js\nresolveIncludedSheetNames_()"]
     Main --> Wait["CalculationWaiter.js\nwaitForCalculationsToFinish_()"]
     Main --> Sweep["DriveUtils.js\ncleanUpOrphanedExportTempFiles_()"]
+    Main --> Columns["ColumnExclusion.js\nresolveExcludedColumnSpans_()\napplyExcludedColumns_()"]
     Main --> Dup["SpreadsheetDuplicator.js\nduplicateSpreadsheetFile_()"]
     Main --> Flatten["SpreadsheetDuplicator.js\nflattenUnsafeFormulas_()"]
     Wait --> Select
     Flatten --> Select["FormulaClassifier.js\ngetFlattenColumnsByRow_()"]
     Select --> Classify["FormulaClassifier.js\nclassifyFormula_()"]
-    Classify --> Parse["FormulaParser.js\nfunction / sheet-ref extraction"]
+    Classify --> Parse["FormulaParser.js\nfunction / sheet / column-ref extraction"]
     Main --> Fetch["XlsxFetch.js\nfetchXlsxBlob_()"]
     Main --> Cleanup["DriveUtils.js\ndeleteFileWithRetry_() in finally"]
     Main --> Save["DriveUtils.js\nsaveBlobToDriveFolder_()"]
@@ -122,6 +146,7 @@ graph TD
   Sweep -->|"trashes stale copies"| DriveFolder[("Source's Drive folder")]
   Dup --> DriveCopy[("Temporary Drive copy")]
   Flatten --> DriveCopy
+  Columns --> DriveCopy
   Cleanup -->|"trashes"| DriveCopy
   Fetch --> ExportEndpoint[("docs.google.com/.../export?format=xlsx")]
   DriveCopy --> ExportEndpoint
@@ -146,7 +171,7 @@ There's no automated test framework in Apps Script, and no test harness in this 
 
 After changing the orphan sweep (`cleanUpOrphanedExportTempFiles_`), also check it by hand, since a Drive search that silently matches nothing would leave orphans piling up unnoticed: copy the scratch spreadsheet into the same folder with a name starting `__xlsx_export_tmp__`, wait 15+ minutes, run any export, and confirm the copy was trashed.
 
-Suggested scratch spreadsheet layout for a thorough check: a `Data` sheet with safe formulas, a `Custom` sheet with a real custom Apps Script function, an `External` sheet with `IMPORTRANGE`, a `Summary` sheet with a formula referencing `Data!`, a formula/named range referencing a sheet you'll exclude, and an `ARRAYFORMULA` spilling across multiple rows/columns, and an `Excluded` sheet. Confirm: the excluded sheet is absent from the export; safe formulas are still live; `IMPORTRANGE`/custom-function/excluded-referencing cells and the full extent of the `ARRAYFORMULA`'s spilled output are static values, not blank or errored; and the original spreadsheet is completely unchanged afterward. Also worth adding a sheet with **no** unsafe formulas but a few tricky literals (`'00123`, `'=1+1`, a cell with rich text/links) to confirm it comes through untouched.
+Suggested scratch spreadsheet layout for a thorough check: a `Data` sheet with safe formulas, a `Custom` sheet with a real custom Apps Script function, an `External` sheet with `IMPORTRANGE`, a `Summary` sheet with a formula referencing `Data!`, a formula/named range referencing a sheet you'll exclude, and an `ARRAYFORMULA` spilling across multiple rows/columns, and an `Excluded` sheet. Confirm: the excluded sheet is absent from the export; safe formulas are still live; `IMPORTRANGE`/custom-function/excluded-referencing cells and the full extent of the `ARRAYFORMULA`'s spilled output are static values, not blank or errored; and the original spreadsheet is completely unchanged afterward. For `excludeColumns`, add a sheet with formulas reading a to-be-deleted column directly, through a range that only overlaps it, via `Sheet!` from another sheet, and through a named range, plus one that reads only surviving columns; confirm the former are static values and the latter stay live and correct after the shift, in both `'delete'` and `'hide'` mode. Also try frozen columns, merged cells and a filter on that sheet. Also worth adding a sheet with **no** unsafe formulas but a few tricky literals (`'00123`, `'=1+1`, a cell with rich text/links) to confirm it comes through untouched.
 
 To verify the calculation wait, add a deliberately slow custom function **defined in the scratch spreadsheet's own bound Apps Script project** (not this library — custom functions execute in the calling spreadsheet's context), e.g.:
 
