@@ -4,10 +4,11 @@ Google Apps Script library that exports a Google Sheets spreadsheet to a real `.
 
 ## Commands
 
-Run `npm run check` after every edit — it's the aggregate of the two below, takes seconds, and needs no network.
+Run `npm run check` after every edit — it's the aggregate of the three below, takes seconds, and needs no network.
 
 - `npm run typecheck` — `tsc --noEmit` over `src/` (`jsconfig.json`, `checkJs` + `strict`, real `@types/google-apps-script`). Verifies JSDoc types, nullability (e.g. `getSheetByName()`), and cross-file references in the shared global scope.
 - `npm run lint` — ESLint (`eslint.config.mjs`): `no-var`, `prefer-const`, `eqeqeq`, plus `eslint-plugin-jsdoc` requiring a typed JSDoc on every function. `no-undef` is off on purpose — `tsc` owns undefined-name checking.
+- `npm test` — `node --test` over `test/**/*.test.js` (built-in runner, no dependencies). `test/loadSources.js` concatenates `src/*.js` into one scope like Apps Script does, so tests call the pure logic directly. Apps Script globals (`SpreadsheetApp`/`DriveApp`/`Utilities`) don't exist under Node, so code that calls them is not unit-tested; the few pure-logic functions that merely *receive* a spreadsheet (e.g. `resolveExcludedColumnSpans_`, `buildDeletedColumns_`) are tested with a tiny hand-written stub exposing only the methods they call — no mocking library.
 - Not wired into a pre-commit hook or CI yet.
 
 ## Layout
@@ -36,7 +37,7 @@ Everything pushed to Apps Script lives in `src/` (`.clasp.json` has `"rootDir": 
 
 ## Testing
 
-No automated test framework and no test harness in the repo: after `clasp push`, the consuming scratch project uses the library's **Head** version and calls the export directly. See the README's "Testing" section for the recommended scratch-spreadsheet layout that exercises safe formulas, custom functions, `IMPORTRANGE`, excluded-sheet references, and `ARRAYFORMULA` spills.
+Pure logic (parsing, classification, column/sheet resolution) has unit tests in `test/` — add or update them for new logic and bug fixes, and write the failing test first for a bug. The Apps Script–touching code has no automated tests: after `clasp push`, the consuming scratch project uses the library's **Head** version and calls the export directly. See the README's "Testing" section for the recommended scratch-spreadsheet layout that exercises safe formulas, custom functions, `IMPORTRANGE`, excluded-sheet references, and `ARRAYFORMULA` spills.
 
 ## Deployment
 
