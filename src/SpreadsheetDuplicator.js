@@ -12,9 +12,7 @@
  */
 function duplicateSpreadsheetFile_(spreadsheetId, copyName) {
   const sourceFile = DriveApp.getFileById(spreadsheetId);
-  const parentIterator = sourceFile.getParents();
-  const destinationFolder = parentIterator.hasNext() ? parentIterator.next() : DriveApp.getRootFolder();
-  return sourceFile.makeCopy(copyName, destinationFolder);
+  return sourceFile.makeCopy(copyName, getFileParents_(sourceFile)[0]);
 }
 
 /**

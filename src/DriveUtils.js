@@ -1,4 +1,18 @@
 /**
+ * Returns a Drive file's parent folders, falling back to the account's root
+ * folder for a file with none (Drive files always live somewhere, but a file
+ * can legitimately have zero parents, e.g. one shared directly with no folder).
+ * @param {GoogleAppsScript.Drive.File} file
+ * @returns {GoogleAppsScript.Drive.Folder[]}
+ */
+function getFileParents_(file) {
+  const iterator = file.getParents();
+  const parents = [];
+  while (iterator.hasNext()) parents.push(iterator.next());
+  return parents.length > 0 ? parents : [DriveApp.getRootFolder()];
+}
+
+/**
  * Saves a Blob into a Drive folder, returning the created File.
  * @param {GoogleAppsScript.Base.Blob} blob
  * @param {string} folderId
@@ -59,10 +73,7 @@ function deleteFileWithRetry_(fileId, maxAttempts) {
 function cleanUpOrphanedExportTempFiles_(spreadsheetId, tempFilePrefix, maxAgeMs) {
   const minAge = maxAgeMs ?? 15 * 60 * 1000;
   const cutoff = Date.now() - minAge;
-  const parentIterator = DriveApp.getFileById(spreadsheetId).getParents();
-  const parents = [];
-  while (parentIterator.hasNext()) parents.push(parentIterator.next());
-  if (parents.length === 0) parents.push(DriveApp.getRootFolder());
+  const parents = getFileParents_(DriveApp.getFileById(spreadsheetId));
 
   const escapedPrefix = tempFilePrefix.replace(/[\\']/g, '\\$&');
   const query = `title contains '${escapedPrefix}' and trashed = false`;
