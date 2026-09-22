@@ -35,3 +35,14 @@ function columnLettersToIndex_(letters) {
   for (const ch of letters.toUpperCase()) index = index * 26 + (ch.charCodeAt(0) - 64);
   return index - 1;
 }
+
+/**
+ * True if the inclusive column range [start, end] overlaps any span in `spans`.
+ * @param {{start: number, end: number}[]} spans
+ * @param {number} start
+ * @param {number} end
+ * @returns {boolean}
+ */
+function spansOverlap_(spans, start, end) {
+  return spans.some((span) => start <= span.end && end >= span.start);
+}

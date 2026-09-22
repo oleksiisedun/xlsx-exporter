@@ -115,7 +115,7 @@ function buildDeletedColumns_(spreadsheet, excludedColumnSpans, mode) {
     const spans = excludedColumnSpans.get(range.getSheet().getName());
     const start = range.getColumn() - 1;
     const end = start + range.getNumColumns() - 1;
-    if (spans && spans.some((span) => start <= span.end && end >= span.start)) {
+    if (spans && spansOverlap_(spans, start, end)) {
       deletedColumns.affectedNamedRanges.add(namedRange.getName());
     }
   });

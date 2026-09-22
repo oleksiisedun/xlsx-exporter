@@ -88,7 +88,7 @@ function classifyFormula_(formula, sheetName, excludedSheetNames, namedRangeShee
   if (deletedColumns.spansBySheet.size > 0) {
     const touchesDeletedColumn = extractColumnReferences_(stripped).some((ref) => {
       const spans = deletedColumns.spansBySheet.get(ref.sheetName ?? sheetName);
-      return spans && spans.some((span) => ref.startCol <= span.end && ref.endCol >= span.start);
+      return spans && spansOverlap_(spans, ref.startCol, ref.endCol);
     });
     if (touchesDeletedColumn) return 'UNSAFE';
   }
