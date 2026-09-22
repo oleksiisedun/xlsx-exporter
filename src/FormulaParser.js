@@ -27,6 +27,15 @@ function extractFunctionNames_(formulaWithoutStrings) {
 const SHEET_REF_RE = /'((?:[^']|'')*)'!|([A-Za-z_][A-Za-z0-9_.]*)!/g;
 
 /**
+ * Unescapes a quoted sheet name's doubled single quotes ('' -> ').
+ * @param {string} quotedName
+ * @returns {string}
+ */
+function unescapeSheetName_(quotedName) {
+  return quotedName.replace(/''/g, "'");
+}
+
+/**
  * Extracts sheet names referenced via SheetName!A1 / 'Sheet Name'!A1:B2 syntax.
  * @param {string} formulaWithoutStrings
  * @returns {string[]} Unescaped sheet names (de-duplicated).
@@ -36,7 +45,7 @@ function extractSheetQualifiedReferences_(formulaWithoutStrings) {
   let m;
   SHEET_REF_RE.lastIndex = 0;
   while ((m = SHEET_REF_RE.exec(formulaWithoutStrings))) {
-    const raw = m[1] !== undefined ? m[1].replace(/''/g, "'") : m[2];
+    const raw = m[1] !== undefined ? unescapeSheetName_(m[1]) : m[2];
     names.add(raw);
   }
   return [...names];
@@ -113,7 +122,7 @@ function extractColumnReferences_(formulaWithoutStrings) {
   const references = [];
   for (const m of formulaWithoutStrings.matchAll(CELL_REFERENCE_RE)) {
     const g = m.groups ?? {};
-    const sheetName = g.quotedSheet !== undefined ? g.quotedSheet.replace(/''/g, "'") : g.plainSheet ?? null;
+    const sheetName = g.quotedSheet !== undefined ? unescapeSheetName_(g.quotedSheet) : g.plainSheet ?? null;
     if (g.rowRange) {
       references.push({ sheetName, startCol: 0, endCol: Infinity });
       continue;
