@@ -41,3 +41,39 @@ describe('watchedValuesEqual_', () => {
     assert.equal(watchedValuesEqual_(new Map([['A', [new Date(t)]]]), new Map([['A', [t]]])), false);
   });
 });
+
+describe('readFlattenCellsSnapshot_', () => {
+  const { readFlattenCellsSnapshot_ } = loadSources();
+  const noDeleted = { spansBySheet: new Map(), affectedNamedRanges: new Set() };
+
+  /** Stub exposing only what the function calls; the grid is swapped between polls. */
+  const stubSpreadsheet = (/** @type {{formulas: string[][], values: any[][]}} */ grid) => ({
+    getSheetByName: () => ({
+      getDataRange: () => ({
+        getNumRows: () => grid.values.length,
+        getNumColumns: () => grid.values[0].length,
+        getFormulas: () => grid.formulas,
+        getValues: () => grid.values,
+      }),
+      getRange: (/** @type {number} */ r, /** @type {number} */ c) => ({ getA1Notation: () => `R${r}C${c}` }),
+    }),
+  });
+  const read = (/** @type {any} */ grid) => readFlattenCellsSnapshot_(stubSpreadsheet(grid), ['S'], new Set(), new Map(), noDeleted);
+  const importFormula = '=IMPORTRANGE("id","A1:B2")';
+
+  it('picks up spill cells that appear after the anchor stops loading', () => {
+    const loading = read({ formulas: [[importFormula, ''], ['', '']], values: [['Loading...', ''], ['', '']] });
+    assert.deepEqual(loading.positions.get('S'), ['0:0']);
+    assert.deepEqual(loading.loadingCell, { sheetName: 'S', a1Notation: 'R1C1' });
+
+    const settled = read({ formulas: [[importFormula, ''], ['', '']], values: [[0, 2], [0, 6]] });
+    assert.deepEqual(settled.positions.get('S'), ['0:0', '0:1', '1:0', '1:1']);
+    assert.equal(settled.loadingCell, null);
+  });
+
+  it('treats a spill that grows as a change even when the anchor value is unchanged', () => {
+    const stale = read({ formulas: [[importFormula, ''], ['', '']], values: [[0, ''], ['', '']] });
+    const real = read({ formulas: [[importFormula, ''], ['', '']], values: [[0, 2], ['', '']] });
+    assert.equal(watchedValuesEqual_(stale.positions, real.positions), false);
+  });
+});

@@ -39,9 +39,10 @@ const CALCULATION_LOADING_PLACEHOLDER = 'Loading...';
  * `pollIntervalMs` apart — see no "Loading..." AND report identical values
  * for every watched cell; any change between polls resets the count.
  *
- * Formulas are read from the source exactly once, up front: unlike values,
- * formula text can't change purely as a result of waiting for calculation
- * to settle, so only values are re-read on each poll.
+ * The watched cell set is re-derived from fresh formulas and values on every
+ * poll (see `readFlattenCellsSnapshot_`), so cells a still-loading spilling
+ * formula fills in later are picked up too, and a spill changing size counts
+ * as a change.
  *
  * Pass `timeoutMs: 0` to opt out entirely — returns immediately, no reads.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} sourceSpreadsheet
@@ -58,18 +59,18 @@ function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, exc
   if (timeout === 0) return;
   const interval = Math.max(pollIntervalMs ?? 3000, 250);
 
-  const watchLists = buildCalculationWatchLists_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns);
   const deadline = Date.now() + timeout;
 
-  let previousValues = null;
+  /** @type {FlattenCellsSnapshot|null} */
+  let previous = null;
   while (true) {
-    const stillCalculating = findCellStillCalculating_(sourceSpreadsheet, watchLists);
+    const current = readFlattenCellsSnapshot_(sourceSpreadsheet, includedSheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns);
+    const stillCalculating = current.loadingCell;
     if (!stillCalculating) {
-      const currentValues = captureWatchedValues_(sourceSpreadsheet, watchLists);
-      if (previousValues && watchedValuesEqual_(previousValues, currentValues)) return;
-      previousValues = currentValues;
+      if (previous && watchedValuesEqual_(previous.positions, current.positions) && watchedValuesEqual_(previous.values, current.values)) return;
+      previous = current;
     } else {
-      previousValues = null;
+      previous = null;
     }
 
     if (Date.now() >= deadline) {
@@ -87,80 +88,53 @@ function waitForCalculationsToFinish_(sourceSpreadsheet, includedSheetNames, exc
 }
 
 /**
- * Precomputes, once per included sheet, the exact 0-based [row, col] pairs
- * that `getFlattenColumnsByRow_` says will be baked into the export as a
- * static value. Built once because the underlying formula text can't change
- * while this function is only waiting on values to settle.
+ * @typedef {Object} FlattenCellsSnapshot
+ * @property {Map<string, string[]>} positions - Sheet name -> "row:col" of every cell `getFlattenColumnsByRow_` selects, in scan order.
+ * @property {Map<string, any[]>} values - Sheet name -> those cells' values, parallel to `positions`.
+ * @property {{sheetName: string, a1Notation: string}|null} loadingCell - First selected cell still showing the loading placeholder, or null.
+ */
+
+/**
+ * Re-reads formulas and values from scratch and returns exactly the cells
+ * `getFlattenColumnsByRow_` would freeze into the export right now, with
+ * their values. The selection is recomputed on every poll, never cached: a
+ * spilling formula (IMPORTRANGE/FILTER/...) that is still loading holds a
+ * single cell, and the cells it later spills into are formula-less values
+ * that only join the selection once they appear. A selection frozen from the
+ * first read would never watch them, so they could still be changing — or be
+ * a stale 0 — when the export reads them. Comparing positions as well as
+ * values makes a spill that grows or shrinks between polls count as a change.
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
  * @param {string[]} sheetNames
  * @param {Set<string>} excludedSheetNames
  * @param {Map<string,string>} namedRangeSheetNames
  * @param {DeletedColumns} deletedColumns
- * @returns {Map<string, number[][]>} Sheet name -> array of [row, col] pairs to watch.
+ * @returns {FlattenCellsSnapshot}
  */
-function buildCalculationWatchLists_(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
-  const watchLists = new Map();
+function readFlattenCellsSnapshot_(spreadsheet, sheetNames, excludedSheetNames, namedRangeSheetNames, deletedColumns) {
+  /** @type {FlattenCellsSnapshot} */
+  const snapshot = { positions: new Map(), values: new Map(), loadingCell: null };
   sheetNames.forEach((sheetName) => {
     const sheet = getRequiredSheet_(spreadsheet, sheetName);
     const dataRange = sheet.getDataRange();
-    const numRows = dataRange.getNumRows();
-    const numCols = dataRange.getNumColumns();
-    /** @type {number[][]} */
-    const cells = [];
-    if (numRows > 0 && numCols > 0) {
-      const formulas = dataRange.getFormulas();
+    /** @type {string[]} */
+    const positions = [];
+    /** @type {any[]} */
+    const cellValues = [];
+    if (dataRange.getNumRows() > 0 && dataRange.getNumColumns() > 0) {
       const values = dataRange.getValues();
-      getFlattenColumnsByRow_(formulas, values, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns)
-        .forEach((cols, r) => cols.forEach((c) => cells.push([r, c])));
+      getFlattenColumnsByRow_(dataRange.getFormulas(), values, sheetName, excludedSheetNames, namedRangeSheetNames, deletedColumns)
+        .forEach((cols, r) => cols.forEach((c) => {
+          positions.push(`${r}:${c}`);
+          cellValues.push(values[r][c]);
+          if (!snapshot.loadingCell && values[r][c] === CALCULATION_LOADING_PLACEHOLDER) {
+            snapshot.loadingCell = { sheetName, a1Notation: sheet.getRange(r + 1, c + 1).getA1Notation() };
+          }
+        }));
     }
-    watchLists.set(sheetName, cells);
+    snapshot.positions.set(sheetName, positions);
+    snapshot.values.set(sheetName, cellValues);
   });
-  return watchLists;
-}
-
-/**
- * Re-reads current values and returns the first watched cell still showing
- * the loading placeholder, or null if none are.
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
- * @param {Map<string, number[][]>} watchLists
- * @returns {{sheetName: string, a1Notation: string}|null}
- */
-function findCellStillCalculating_(spreadsheet, watchLists) {
-  for (const [sheetName, cells] of watchLists) {
-    if (cells.length === 0) continue;
-    const sheet = getRequiredSheet_(spreadsheet, sheetName);
-    const values = sheet.getDataRange().getValues();
-    for (const [r, c] of cells) {
-      const row = values[r];
-      if (row && row[c] === CALCULATION_LOADING_PLACEHOLDER) {
-        return { sheetName, a1Notation: sheet.getRange(r + 1, c + 1).getA1Notation() };
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Reads the current value of every watched cell, keyed by sheet name, so two
- * successive polls can be compared for equality. This is what lets
- * `waitForCalculationsToFinish_` catch a cell that reports a plausible but
- * still-unsettled value (e.g. a cross-spreadsheet IMPORTRANGE briefly
- * showing 0) without ever displaying the "Loading..." placeholder.
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
- * @param {Map<string, number[][]>} watchLists
- * @returns {Map<string, any[]>} Sheet name -> cell values, in the same order as watchLists' [row, col] pairs.
- */
-function captureWatchedValues_(spreadsheet, watchLists) {
-  const snapshot = new Map();
-  for (const [sheetName, cells] of watchLists) {
-    if (cells.length === 0) {
-      snapshot.set(sheetName, []);
-      continue;
-    }
-    const sheet = getRequiredSheet_(spreadsheet, sheetName);
-    const values = sheet.getDataRange().getValues();
-    snapshot.set(sheetName, cells.map(([r, c]) => (values[r] ? values[r][c] : undefined)));
-  }
   return snapshot;
 }
 
